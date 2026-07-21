@@ -292,6 +292,28 @@ tipo de conta.
 | `account.taxNumber` | **CPF/CNPJ do titular** | — | **Não persistir.** É PII e não serve a nenhuma das 3 perguntas do MVP |
 | `item.status` + `item.executionStatus` | dois campos distintos | `status` | Nosso modelo tem um só. `PARTIAL_SUCCESS` (veio conta, falhou cartão) **não** é sucesso |
 
+### Estado do Item: como traduzimos (implementado na TASK-004)
+
+A Pluggy expõe **dois** campos de estado — `status` (7 valores) e `executionStatus` (33 valores) —
+e nosso `BankItem` persiste **os dois crus**, derivando um estado próprio para a aplicação:
+
+| Nosso estado | Quando |
+|---|---|
+| `OK` | Única combinação: `status = UPDATED` **e** `executionStatus = SUCCESS` |
+| `SINCRONIZANDO` | Execução em progresso |
+| `PRECISA_ACAO` | Depende do usuário: MFA, credencial inválida, autorização pendente |
+| `PARCIAL` | `PARTIAL_SUCCESS` — veio parte dos produtos, faltou algum |
+| `ERRO` | Qualquer falha, **e todo valor desconhecido** |
+
+Três garantias verificadas sobre as 615 combinações possíveis (incluindo valores adversariais):
+
+1. **`PARTIAL_SUCCESS` nunca resulta em `OK`.** Zero casos. Um produto que falhou não passa por sucesso.
+2. **Valor desconhecido sempre cai em `ERRO`**, nunca lança. A Pluggy pode adicionar valores a
+   qualquer momento sem quebrar a aplicação.
+3. **Precedência deliberada:** quando o Item precisa de ação do usuário **e** teve
+   `PARTIAL_SUCCESS`, o estado é `PRECISA_ACAO`, não `PARCIAL` — o que o usuário precisa fazer é
+   mais acionável do que o que faltou coletar. Resolver a ação tende a resolver o parcial junto.
+
 ### Outras restrições técnicas
 
 - **Paginação por cursor:** transações vêm em páginas de 500, com um cursor `next`. Um sync que

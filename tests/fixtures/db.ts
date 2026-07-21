@@ -18,6 +18,13 @@ export function buildBankItem(overrides: Record<string, unknown> = {}) {
     pluggyItemId: `item-${uniqueSuffix()}`,
     institution: "Banco Teste",
     status: "UPDATED",
+    // TASK-004: BankItem ganhou o campo `executionStatus` (resolve o
+    // DT-009 - Pluggy expoe dois campos de estado distintos). Default
+    // neutro ("SUCCESS") para nao quebrar os testes de TASK-001/TASK-002
+    // que criam BankItem via este fixture sem se importar com o novo
+    // campo - eles continuam validos porque o valor default aqui e
+    // sempre sobrescrevivel via `overrides`.
+    executionStatus: "SUCCESS",
     ...overrides,
   };
 }

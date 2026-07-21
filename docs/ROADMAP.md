@@ -24,7 +24,7 @@
 | Task | Título | Status |
 |---|---|---|
 | [TASK-003](./tasks/TASK-003.md) | Connect Token server-side (`POST /api/connect-token`) | CONCLUÍDA |
-| [TASK-004](./tasks/TASK-004.md) | Persistir o BankItem e modelar o estado do Item (resolve DT-009) | EM ANDAMENTO |
+| [TASK-004](./tasks/TASK-004.md) | Persistir o BankItem e modelar o estado do Item (resolve DT-009) | CONCLUÍDA |
 | — | Widget PluggyConnect + desativar/arquivar banco (resolve DT-002) | PENDENTE |
 
 ## Fase 2 — Sync + listagem
