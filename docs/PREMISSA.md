@@ -243,11 +243,20 @@ Credenciais são obtidas no [Dashboard da Pluggy](https://dashboard.pluggy.ai/).
 
 ---
 
-## 9. Riscos e verificações pendentes
+## 9. Restrições operacionais da API (confirmadas antes da Fase 1)
 
-- [ ] **Cobertura:** confirmar no dashboard/doc de "Open Finance Institutions Coverage" quais produtos os conectores das instituições entregam (conta, cartão, fatura) e se há particularidades de MFA.
-- [ ] **Plano Pluggy:** verificar limites do plano gratuito/trial (nº de Items, rate limits) antes de conectar contas reais.
-- [ ] **Expiração de consentimento:** Open Finance exige renovação periódica — a UI precisa avisar quando o Item ficar `OUTDATED`.
+Estas restrições **moldam o desenho do sync** — não são detalhe de infraestrutura.
+
+| Restrição | Valor | Consequência de projeto |
+|---|---|---|
+| Rate limit | ~30 requisições/minuto | Folga confortável. Não é o fator limitante. |
+| Concorrência desejada | **1 requisição por vez** | Nada de disparar chamadas em paralelo por Account. O sync percorre as contas em série. |
+| Frequência de atualização na origem | **1× por dia, de madrugada** | Este é o fator limitante real. Sincronizar duas vezes no mesmo dia devolve **os mesmos dados**. Logo: o sync é diário, e chamadas repetidas no mesmo dia são desperdício — devem ser evitadas por `lastSyncAt`, não por confiança no usuário. |
+| Ambiente | **Contas reais, sem sandbox** | Não usar `includeSandbox` no widget. Todo teste automatizado usa dados fabricados no nosso Postgres; a API real nunca é chamada em teste. |
+
+### Verificações ainda pendentes
+- [ ] **Cobertura por produto:** as instituições conectadas entregam conta corrente, cartão e saldo. Falta confirmar, na prática, o formato exato do que volta (fatura fechada, categorização, campos de saldo) — será descoberto ao exercitar a API na Fase 1/2, e este documento deve ser atualizado com o que aprendermos.
+- [ ] **Expiração de consentimento:** Open Finance exige renovação periódica — a UI precisa avisar quando o Item ficar `OUTDATED`. Ver DT-002 em [DEBITO-TECNICO.md](./DEBITO-TECNICO.md).
 - [ ] **Fatura do cartão:** validar se a fatura fechada vem via endpoint de Credit Card Bills ou se precisamos agrupar transações por período.
 
 ---
@@ -261,3 +270,6 @@ Credenciais são obtidas no [Dashboard da Pluggy](https://dashboard.pluggy.ai/).
 | 3 | ~~SQLite no MVP~~ → **Postgres via Docker Compose desde o MVP** (revisto na TASK-001) | Evita a migração futura e o risco de divergência entre dev e produção; `Decimal` e constraints se comportam igual desde o dia 1. Custo: exige Docker rodando localmente |
 | 4 | Contas fixas geram "instâncias" mensais | Permite histórico (quanto foi a luz em cada mês) e baixa individual |
 | 5 | Sync manual no MVP, webhooks na fase 2 | Reduz complexidade inicial |
+| 6 | **Direto em contas reais, sem sandbox** (decidido em 2026-07-21) | O sandbox adiaria a descoberta do formato real dos dados, que é justamente o que ainda não conhecemos. Custo: nenhum teste automatizado pode chamar a API real — os testes usam dados fabricados no nosso Postgres |
+| 7 | **Sync no máximo 1× por dia, em série** (decidido em 2026-07-21) | A origem atualiza os dados 1× por dia, de madrugada. Sincronizar mais que isso gasta requisição e devolve dados idênticos. O limite vem da origem, não do rate limit |
+| 8 | **Repositório público, documentação sem nomes de instituição** (decidido em 2026-07-21) | O projeto serve para qualquer banco e é usado como portfólio. A premissa fala em "instituições" em vez de nomear os bancos do usuário |
