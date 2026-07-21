@@ -1,0 +1,81 @@
+// Schema Prisma do Gestor Financeiro (TASK-001).
+// Modelo de dados conforme docs/PREMISSA.md secao 5, com @relation explicitas
+// para as FKs soltas do rascunho (bankItemId, accountId, recurringBillId,
+// transactionId) e indices em Transaction.date / Transaction.accountId.
+//
+// TASK-002: onDelete tornado explicito em Account.bankItem (Cascade) e
+// Transaction.account (Restrict) - politica de exclusao intencional para o
+// fluxo de BankItem (ver lib/bank-item.ts). O Restrict em Transaction.account
+// nao muda o comportamento no Postgres (ja era o default implicito do Prisma
+// para relacao obrigatoria - confirmado via pg_constraint), por isso
+// `prisma migrate dev` nao gerou uma nova migration para essa mudanca (ver
+// TASK-002.md secao 6).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model BankItem {
+  id           String    @id @default(cuid())
+  pluggyItemId String    @unique
+  institution  String
+  status       String
+  lastSyncAt   DateTime?
+  accounts     Account[]
+}
+
+model Account {
+  id              String   @id @default(cuid())
+  pluggyAccountId String?  @unique
+  bankItemId      String?
+  bankItem        BankItem? @relation(fields: [bankItemId], references: [id], onDelete: Cascade)
+  name            String
+  type            String
+  transactions    Transaction[]
+}
+
+model Transaction {
+  id                   String    @id @default(cuid())
+  pluggyTransactionId  String?   @unique
+  accountId            String
+  account              Account   @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  date                 DateTime
+  description          String
+  amount               Decimal   @db.Decimal(14, 2)
+  category             String?
+  categoryOverride     String?
+  source               String
+  method                String?
+  recurringBillId      String?
+  recurringBill        RecurringBill? @relation(fields: [recurringBillId], references: [id])
+  billInstance         RecurringBillInstance?
+
+  @@index([date])
+  @@index([accountId])
+}
+
+model RecurringBill {
+  id           String   @id @default(cuid())
+  name         String
+  amount       Decimal  @db.Decimal(14, 2)
+  dueDay       Int
+  method       String
+  active       Boolean  @default(true)
+  instances    RecurringBillInstance[]
+  transactions Transaction[]
+}
+
+model RecurringBillInstance {
+  id              String        @id @default(cuid())
+  recurringBillId String
+  recurringBill   RecurringBill @relation(fields: [recurringBillId], references: [id])
+  month           String
+  status          String
+  paidAmount      Decimal?      @db.Decimal(14, 2)
+  transactionId   String?       @unique
+  transaction     Transaction?  @relation(fields: [transactionId], references: [id])
+}
