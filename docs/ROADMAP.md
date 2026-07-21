@@ -9,13 +9,14 @@
 | Task | Título | Status |
 |---|---|---|
 | [TASK-001](./tasks/TASK-001.md) | Fundação de dados: Prisma + Postgres + schema + healthcheck | CONCLUÍDA |
+| [TASK-002](./tasks/TASK-002.md) | Política de exclusão do BankItem + fail-fast de DATABASE_URL | CONCLUÍDA |
 
-> **Herança para as próximas fases (achado do review da TASK-001):** `Transaction.account` ficou
-> com `onDelete: RESTRICT` (default do Prisma), enquanto `Account.bankItem` é `Cascade`. Na prática,
-> deletar um `BankItem` cujas Accounts já tenham Transactions **falha** com violação de FK. O teste
-> de cascade da TASK-001 passa apenas porque as Accounts do cenário estão vazias. A task que
-> introduzir exclusão/reconexão de Item (Fase 1 ou 6) precisa definir essa política e cobrir o caso
-> "BankItem com Accounts não vazias".
+> **Política de exclusão (definida na TASK-002):** deletar um `BankItem` que já tenha transações
+> importadas é **recusado**, e nada é apagado — o histórico financeiro é preservado por decisão de
+> produto. `BankItem→Account` é `Cascade` e `Account→Transaction` é `Restrict`, ambos explícitos.
+> A contrapartida ainda não existe: não há como "desconectar" um banco. Ver **DT-002** em
+> [DEBITO-TECNICO.md](./DEBITO-TECNICO.md) — a Fase 1 ou 6 precisa entregar arquivar/desativar Item,
+> porque consentimento de Open Finance expira e Items precisam ser aposentados.
 
 ## Fase 1 — Conexão Pluggy
 **Critério de pronto:** conecto um banco e o `itemId` fica salvo.
