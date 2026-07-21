@@ -23,7 +23,8 @@
 
 | Task | Título | Status |
 |---|---|---|
-| — | `/api/connect-token`, widget PluggyConnect, persistir BankItem | PENDENTE |
+| [TASK-003](./tasks/TASK-003.md) | Connect Token server-side (`POST /api/connect-token`) | EM ANDAMENTO |
+| — | Widget PluggyConnect + persistir BankItem (inclui decidir o modelo de status, DT-009) | PENDENTE |
 
 ## Fase 2 — Sync + listagem
 **Critério de pronto:** vejo minhas transações reais das instituições conectadas.

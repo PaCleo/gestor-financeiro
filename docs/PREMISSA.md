@@ -32,7 +32,7 @@ O objetivo do MVP é responder três perguntas todos os dias:
 | Contas fixas | Cadastrar recorrências mensais (aluguel, luz, água, gás, condomínio…) com dia de vencimento e valor estimado |
 | Marcar como pago | Dar baixa numa conta fixa — manualmente ou vinculando a uma transação importada |
 | Dashboard | Total do mês por categoria, contas pendentes, saldo por conta |
-| Categorias | Usar a categorização da Pluggy + permitir recategorizar manualmente |
+| Categorias | **Categorização manual** — a categorização automática da Pluggy exige assinatura Pro, que não temos: o campo `category` chega `null`. Ver seção 11. |
 
 ### Fica para depois ⏭️
 - Múltiplos usuários / login social (MVP é single-user com auth simples)
@@ -258,6 +258,47 @@ Estas restrições **moldam o desenho do sync** — não são detalhe de infraes
 - [ ] **Cobertura por produto:** as instituições conectadas entregam conta corrente, cartão e saldo. Falta confirmar, na prática, o formato exato do que volta (fatura fechada, categorização, campos de saldo) — será descoberto ao exercitar a API na Fase 1/2, e este documento deve ser atualizado com o que aprendermos.
 - [ ] **Expiração de consentimento:** Open Finance exige renovação periódica — a UI precisa avisar quando o Item ficar `OUTDATED`. Ver DT-002 em [DEBITO-TECNICO.md](./DEBITO-TECNICO.md).
 - [ ] **Fatura do cartão:** validar se a fatura fechada vem via endpoint de Credit Card Bills ou se precisamos agrupar transações por período.
+
+---
+
+## 11. Mapeamento Pluggy → nosso modelo (lido da documentação em 2026-07-21)
+
+> Fonte: `docs.pluggy.ai` — páginas de Transaction, Account, Item Lifecycle e Connect Token.
+> Esta seção existe porque **o formato da Pluggy não é o nosso formato**. Importar cru produz
+> dados errados. Cada linha aqui é uma tradução obrigatória no sync.
+
+### ⚠️ O sinal do `amount` é invertido no cartão de crédito
+
+A documentação de Transaction diz, literalmente: *"positive for credit card expenses, negative
+for payments"*. Ou seja, **num cartão, uma compra chega positiva**. Nosso modelo assume
+`negativo = saída` (seção 5). Importar sem normalizar faz um gasto de cartão ser contabilizado
+como **receita** no dashboard — um erro de dinheiro que não quebra nada e por isso passa
+despercebido. A normalização precisa ser explícita, viver em `lib/` e ter teste dedicado por
+tipo de conta.
+
+### Tabela de tradução
+
+| Campo Pluggy | Formato deles | Nosso campo | Tradução necessária |
+|---|---|---|---|
+| `transaction.id` | UUID string | `pluggyTransactionId` | Direto. É a chave de deduplicação. |
+| `transaction.amount` | number, **sinal depende do tipo de conta** | `amount` (Decimal) | **Normalizar o sinal** — ver aviso acima |
+| `transaction.date` | ISO8601 UTC | `date` | Direto, atenção a fuso na exibição |
+| `transaction.description` / `descriptionRaw` | string | `description` | Preferir `description`; `descriptionRaw` como fallback |
+| `transaction.category` | string \| **null sem Pro** | `category` | **Sempre `null` no nosso plano.** A categoria real vem de `categoryOverride` (manual) |
+| `transaction.type` | `DEBIT` \| `CREDIT` | — | Usar para validar o sinal normalizado |
+| `transaction.status` | `PENDING` \| `POSTED` | — | Decidir se importamos `PENDING` (some/muda depois) |
+| `transaction.paymentData.paymentMethod` | `PIX`/`TED`/`DOC`/`BOLETO` | `method` | Direto quando presente |
+| `account.type` + `subtype` | `BANK`/`CREDIT` + `CHECKING_ACCOUNT`/`SAVINGS_ACCOUNT`/`CREDIT_CARD` | `type` | Mapear para nosso `CHECKING`/`CREDIT_CARD`/`CASH` |
+| `account.taxNumber` | **CPF/CNPJ do titular** | — | **Não persistir.** É PII e não serve a nenhuma das 3 perguntas do MVP |
+| `item.status` + `item.executionStatus` | dois campos distintos | `status` | Nosso modelo tem um só. `PARTIAL_SUCCESS` (veio conta, falhou cartão) **não** é sucesso |
+
+### Outras restrições técnicas
+
+- **Paginação por cursor:** transações vêm em páginas de 500, com um cursor `next`. Um sync que
+  não pagina **trunca em silêncio** e aparenta ter funcionado.
+- **Connect Token:** `POST /connect_token` com header `X-API-KEY`, resposta `{ accessToken }`.
+  O `clientUserId` vai **dentro de `options`**, não na raiz do body (a seção 6.1 dizia o contrário).
+- **Campos que exigem Pro** e virão vazios: `category`, `merchant`.
 
 ---
 
