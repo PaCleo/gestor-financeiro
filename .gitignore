@@ -32,6 +32,13 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# .env.test tem apenas credenciais locais do docker-compose de teste (sem
+# segredos reais) e precisa ser commitado para o Vitest rodar de forma
+# reprodutivel em qualquer maquina/CI.
+!.env.test
+# .env.example documenta as chaves esperadas com valores vazios (Criterio
+# de aceite #7 da TASK-001) - sem segredos reais, seguro para commitar.
+!.env.example
 
 # vercel
 .vercel
