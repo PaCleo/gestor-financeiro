@@ -23,7 +23,7 @@
 
 | Task | Título | Status |
 |---|---|---|
-| [TASK-003](./tasks/TASK-003.md) | Connect Token server-side (`POST /api/connect-token`) | EM ANDAMENTO |
+| [TASK-003](./tasks/TASK-003.md) | Connect Token server-side (`POST /api/connect-token`) | CONCLUÍDA |
 | — | Widget PluggyConnect + persistir BankItem (inclui decidir o modelo de status, DT-009) | PENDENTE |
 
 ## Fase 2 — Sync + listagem
