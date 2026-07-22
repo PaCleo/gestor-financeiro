@@ -25,7 +25,7 @@
 |---|---|---|
 | [TASK-003](./tasks/TASK-003.md) | Connect Token server-side (`POST /api/connect-token`) | CONCLUÍDA |
 | [TASK-004](./tasks/TASK-004.md) | Persistir o BankItem e modelar o estado do Item (resolve DT-009) | CONCLUÍDA |
-| — | Widget PluggyConnect + desativar/arquivar banco (resolve DT-002) | PENDENTE |
+| [TASK-005](./tasks/TASK-005.md) | Widget PluggyConnect + desativar banco (resolve DT-002) | EM ANDAMENTO |
 
 ## Fase 2 — Sync + listagem
 **Critério de pronto:** vejo minhas transações reais das instituições conectadas.
