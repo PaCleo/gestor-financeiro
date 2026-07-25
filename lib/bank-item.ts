@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { fetchPluggyItem } from "@/lib/pluggy";
+import { deleteItemFromPluggy, fetchPluggyItem } from "@/lib/pluggy";
 
 /**
  * Erro de dominio: tentativa de excluir um `BankItem` que ainda tem
@@ -212,4 +212,109 @@ export async function upsertBankItem(pluggyItemId: string): Promise<{
     executionStatus: bankItem.executionStatus,
     state: deriveBankItemState(bankItem.status, bankItem.executionStatus),
   };
+}
+
+/**
+ * Erro de dominio: tentativa de arquivar um `BankItem` cujo `id` nao existe.
+ * Mensagem fixa e generica, mesmo padrao dos demais erros de dominio deste
+ * arquivo/`lib/pluggy.ts`.
+ */
+export class BankItemNotFoundError extends Error {
+  constructor() {
+    super("Banco nao encontrado.");
+    this.name = "BankItemNotFoundError";
+  }
+}
+
+/**
+ * Desativa um `BankItem` (TASK-005, resolve o DT-002) - "desativar" e
+ * "arquivar" (`archivedAt` preenchido), nunca excluir: as `Transaction`s e
+ * `Account`s importadas continuam intactas na base (ver `listActiveBankItems`
+ * abaixo, que so filtra a listagem).
+ *
+ * A ORDEM abaixo e o coracao da task (Criterio de aceite #3) e e
+ * OBRIGATORIA - nunca reordenar:
+ *
+ * 1. `prisma.bankItem.findUnique` pelo `id` - se nao existir, rejeita com
+ *    `BankItemNotFoundError` SEM chamar `deleteItemFromPluggy`.
+ * 2. Se `archivedAt` ja estiver preenchido, retorna imediatamente SEM
+ *    chamar `deleteItemFromPluggy` nem `prisma.bankItem.update`
+ *    (idempotencia - Criterio de aceite #5: desativar duas vezes nao bate na
+ *    Pluggy de novo nem altera o `archivedAt` original).
+ * 3. Senao, chama `deleteItemFromPluggy(bankItem.pluggyItemId)` PRIMEIRO -
+ *    se rejeitar (qualquer erro que nao seja um 404 ja tratado dentro de
+ *    `deleteItemFromPluggy`), o erro e propagado SEM tocar o banco: nenhuma
+ *    operacao local acontece enquanto o Item ainda pode estar compartilhando
+ *    dados na Pluggy. Isso e por privacidade, nao so consistencia tecnica -
+ *    a ordem inversa faria um banco sumir da UI enquanto segue conectado.
+ * 4. So entao `prisma.bankItem.update({ data: { archivedAt: new Date() } })`,
+ *    e o resultado e reconstruido campo a campo (nunca o registro cru do
+ *    Prisma, para nao amplificar um eventual vazamento de PII).
+ */
+export async function archiveBankItem(bankItemId: string): Promise<{
+  id: string;
+  pluggyItemId: string;
+  archivedAt: Date;
+}> {
+  const bankItem = await prisma.bankItem.findUnique({
+    where: { id: bankItemId },
+  });
+
+  if (!bankItem) {
+    throw new BankItemNotFoundError();
+  }
+
+  if (bankItem.archivedAt) {
+    return {
+      id: bankItem.id,
+      pluggyItemId: bankItem.pluggyItemId,
+      archivedAt: bankItem.archivedAt,
+    };
+  }
+
+  await deleteItemFromPluggy(bankItem.pluggyItemId);
+
+  const updated = await prisma.bankItem.update({
+    where: { id: bankItemId },
+    data: { archivedAt: new Date() },
+  });
+
+  return {
+    id: updated.id,
+    pluggyItemId: updated.pluggyItemId,
+    // `update` acabou de gravar `archivedAt` - nunca nulo neste ponto.
+    archivedAt: updated.archivedAt as Date,
+  };
+}
+
+/**
+ * Lista os `BankItem`s ativos (nao arquivados) - TASK-005, Criterio de
+ * aceite #6. Bancos arquivados desaparecem desta lista, mas o registro e
+ * suas relacoes (`Account`/`Transaction`) continuam intactos na base - ver
+ * `archiveBankItem` acima.
+ */
+export async function listActiveBankItems(): Promise<
+  Array<{
+    id: string;
+    pluggyItemId: string;
+    institution: string;
+    status: string;
+    executionStatus: string;
+    state: BankItemState;
+    lastSyncAt: Date | null;
+  }>
+> {
+  const bankItems = await prisma.bankItem.findMany({
+    where: { archivedAt: null },
+  });
+
+  return bankItems.map((bankItem) => ({
+    id: bankItem.id,
+    pluggyItemId: bankItem.pluggyItemId,
+    institution: bankItem.institution,
+    status: bankItem.status,
+    executionStatus: bankItem.executionStatus,
+    state: deriveBankItemState(bankItem.status, bankItem.executionStatus),
+    lastSyncAt: bankItem.lastSyncAt,
+  }));
 }

@@ -321,12 +321,33 @@ describe("upsertBankItem - PII nao e persistida em nenhuma coluna (Criterio de a
 
     const row = await prisma.bankItem.findUnique({ where: { pluggyItemId } });
     expect(row).not.toBeNull();
+    // Esta e a asserção com poder de deteccao real contra vazamento de PII
+    // (licao do DT-011): verifica o VALOR persistido, nao os nomes de
+    // coluna - falharia se o CPF fabricado aparecesse gravado em QUALQUER
+    // coluna, existente ou futura, independente de quantas colunas o
+    // model tiver. Ela sozinha ja prova a garantia que o Criterio 7 pede.
     expect(JSON.stringify(row)).not.toContain(FAKE_CPF);
-    // Nenhuma coluna extra/estranha foi usada para "esconder" o dado -
-    // as colunas do BankItem sao exatamente as do schema (nenhuma coluna
-    // chamada taxNumber ou similar existe).
+    // Esta segunda asserção e um COMPLEMENTO, nao a defesa primaria: um
+    // tripwire de MUDANCA DE SCHEMA (deepEqual exaustivo dos nomes de
+    // coluna), que forca qualquer coluna nova adicionada a BankItem a ser
+    // conscientemente revisada aqui antes da suite voltar a verde - foi
+    // exatamente esse tripwire que pegou `archivedAt` (TASK-005, DT-013,
+    // nullable, nao e PII - revisado e adicionado a lista abaixo). Por si
+    // só, este deepEqual NAO prova ausencia de vazamento (uma coluna
+    // existente poderia, em tese, passar a conter o CPF sem que a lista de
+    // nomes mudasse) - quem prova isso e o `JSON.stringify` acima. As duas
+    // asserções juntas cobrem propriedades diferentes: valor (vazamento
+    // real) e forma (mudanca de schema que exige decisao humana).
     expect(Object.keys(row as object).sort()).toEqual(
-      ["executionStatus", "id", "institution", "lastSyncAt", "pluggyItemId", "status"].sort(),
+      [
+        "archivedAt",
+        "executionStatus",
+        "id",
+        "institution",
+        "lastSyncAt",
+        "pluggyItemId",
+        "status",
+      ].sort(),
     );
   });
 });

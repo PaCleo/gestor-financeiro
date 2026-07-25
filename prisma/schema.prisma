@@ -18,6 +18,12 @@
 // que sempre devolve os dois campos - nao ha caminho legitimo para persistir
 // um BankItem sem `executionStatus` conhecido, por isso obrigatorio (nao
 // `String?`) e correto pelo modelo, nao so mais facil de migrar.
+//
+// TASK-005: BankItem ganha `archivedAt DateTime?` (nullable, DT-013) -
+// resolve o DT-002 (desativar um banco). Nullable por natureza (a maioria
+// dos BankItems nunca sera arquivada) e tambem porque a tabela ja pode ter
+// linhas quando a migration roda - `NOT NULL` sem default quebraria contra
+// dado preexistente (mesma licao do DT-013).
 
 generator client {
   provider = "prisma-client-js"
@@ -34,6 +40,7 @@ model BankItem {
   status          String
   executionStatus String
   lastSyncAt      DateTime?
+  archivedAt      DateTime?
   accounts        Account[]
 }
 

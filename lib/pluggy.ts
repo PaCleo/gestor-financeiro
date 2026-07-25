@@ -134,3 +134,94 @@ export async function fetchPluggyItem(pluggyItemId: string): Promise<{
     throw new PluggyItemFetchError();
   }
 }
+
+/**
+ * Erro de dominio: falha ao deletar o Item na Pluggy (`client.deleteItem`) -
+ * qualquer coisa que NAO seja um 404 (rede/timeout, HTTP 4xx/5xx do lado da
+ * Pluggy). Mensagem fixa e generica - mesmo motivo de
+ * `PluggyConnectTokenError`/`PluggyItemFetchError`: o texto de erro do
+ * fornecedor nao e confiavel para expor ao usuario.
+ */
+export class PluggyItemDeleteError extends Error {
+  constructor() {
+    super(
+      "Nao foi possivel desativar este banco. Tente novamente em instantes.",
+    );
+    this.name = "PluggyItemDeleteError";
+  }
+}
+
+const NOT_FOUND_STATUS_CODE = 404;
+
+/**
+ * Deleta o Item na Pluggy - primeiro passo obrigatorio de "desativar um
+ * banco" (DT-002, TASK-005). Chamado por `archiveBankItem` (lib/bank-item.ts)
+ * ANTES de qualquer alteracao local, para nunca deixar um banco sumir da UI
+ * enquanto ainda compartilha dados com a Pluggy (Criterio de aceite #3).
+ *
+ * - Reutiliza a MESMA validacao de `CLIENT_ID`/`CLIENT_SECRET` das outras
+ *   funcoes deste modulo - rejeita com `PluggyConfigError` SEM instanciar
+ *   `PluggyClient` quando as credenciais estao ausentes/vazias.
+ * - Quando configurado: `client.deleteItem(pluggyItemId)`
+ *   (node_modules/pluggy-sdk/dist/client.d.ts:65).
+ * - Em caso de sucesso, resolve (`void`).
+ * - Quando a rejeicao e o Item-ja-nao-encontrado (ver `isItemNotFoundError`
+ *   abaixo), trata como SUCESSO e resolve mesmo assim - o objetivo (parar de
+ *   compartilhar dados) ja esta satisfeito, nao faz sentido travar o
+ *   arquivamento local por um Item que ja sumiu do lado da Pluggy (Criterio
+ *   de aceite #4).
+ * - Qualquer outra falha vira `PluggyItemDeleteError`, mensagem
+ *   fixa/generica, sem vazar stack trace nem detalhe do SDK.
+ * - Nenhum `console.*` em nenhum caminho.
+ */
+export async function deleteItemFromPluggy(
+  pluggyItemId: string,
+): Promise<void> {
+  const clientId = process.env.CLIENT_ID;
+  const clientSecret = process.env.CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new PluggyConfigError();
+  }
+
+  try {
+    const client = new PluggyClient({ clientId, clientSecret });
+    await client.deleteItem(pluggyItemId);
+  } catch (error) {
+    if (isItemNotFoundError(error)) {
+      return;
+    }
+
+    throw new PluggyItemDeleteError();
+  }
+}
+
+/**
+ * Reconhece o erro "Item ja nao existe na Pluggy" no formato REAL devolvido
+ * pelo SDK (confirmado contra a API real, revisao pos-aprovacao da
+ * TASK-005): um objeto plano SEM `.statusCode` nem `.response` -
+ * `{ message: 'item not found', code: 404, codeDescription: 'ITEM_NOT_FOUND',
+ * errorId: '<uuid>' }` (node_modules/pluggy-sdk/dist/baseApi.js rejeita com
+ * `error.response.body` cru).
+ *
+ * `codeDescription === "ITEM_NOT_FOUND"` e o discriminador PRINCIPAL - mais
+ * semantico e menos ambiguo que `code`, que a Pluggy reaproveita tanto para
+ * status HTTP quanto para codigos de erro proprios em outros endpoints.
+ * `code === 404` e aceito como alternativa (o valor numerico do shape real).
+ * Uma implementacao anterior checava `error.statusCode === 404`, campo que o
+ * SDK real NUNCA popula - o Criterio de aceite #4 falhava silenciosamente em
+ * producao (usuario preso ao tentar desativar um Item ja removido na
+ * Pluggy).
+ */
+function isItemNotFoundError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  const { code, codeDescription } = error as {
+    code?: unknown;
+    codeDescription?: unknown;
+  };
+
+  return codeDescription === "ITEM_NOT_FOUND" || code === NOT_FOUND_STATUS_CODE;
+}

@@ -25,6 +25,11 @@ export function buildBankItem(overrides: Record<string, unknown> = {}) {
     // campo - eles continuam validos porque o valor default aqui e
     // sempre sobrescrevivel via `overrides`.
     executionStatus: "SUCCESS",
+    // TASK-005: BankItem ganha `archivedAt DateTime?` (nullable, DT-013).
+    // Default `undefined` (Prisma usa o default do schema = NULL) - so
+    // sobrescrito nos poucos testes que precisam de um BankItem JA
+    // arquivado (ver tests/integration/bank-item-archive.integration.test.ts).
+    archivedAt: undefined,
     ...overrides,
   };
 }

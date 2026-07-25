@@ -73,8 +73,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  *   - nunca chamar console.log/warn/error em nenhum caminho.
  */
 
-const { PluggyClientMock, createConnectTokenMock, fetchItemMock } = vi.hoisted(
-  () => {
+const {
+  PluggyClientMock,
+  createConnectTokenMock,
+  fetchItemMock,
+  deleteItemMock,
+} = vi.hoisted(() => {
     const createConnectTokenMock = vi.fn();
     // TASK-004: `lib/pluggy.ts` ganha `fetchPluggyItem`, que chama
     // `client.fetchItem(pluggyItemId)` (node_modules/pluggy-sdk/dist/client.d.ts:31 -
@@ -83,6 +87,11 @@ const { PluggyClientMock, createConnectTokenMock, fetchItemMock } = vi.hoisted(
     // reaproveitar o mesmo `PluggyClientMock` construivel (ver nota abaixo)
     // em vez de duplicar o mock da classe inteira num segundo arquivo.
     const fetchItemMock = vi.fn();
+    // TASK-005: `lib/pluggy.ts` ganha `deleteItemFromPluggy`, que chama
+    // `client.deleteItem(pluggyItemId)` (node_modules/pluggy-sdk/dist/client.d.ts:65 -
+    // `deleteItem(id: string): Promise<void>`). Mesma logica de reaproveitar
+    // o mesmo `PluggyClientMock` construivel.
+    const deleteItemMock = vi.fn();
     // IMPORTANTE: precisa ser uma `function` normal, NAO uma arrow function.
     // O SDK real (`node_modules/pluggy-sdk/dist/client.js`) e
     // `class PluggyClient extends BaseApi`, ou seja, so pode ser chamado com
@@ -102,9 +111,15 @@ const { PluggyClientMock, createConnectTokenMock, fetchItemMock } = vi.hoisted(
       return {
         createConnectToken: createConnectTokenMock,
         fetchItem: fetchItemMock,
+        deleteItem: deleteItemMock,
       };
     });
-    return { PluggyClientMock, createConnectTokenMock, fetchItemMock };
+    return {
+      PluggyClientMock,
+      createConnectTokenMock,
+      fetchItemMock,
+      deleteItemMock,
+    };
   },
 );
 
@@ -686,6 +701,285 @@ describe("fetchPluggyItem - falha da Pluggy (item nao encontrado, 500, timeout)"
 
     const { fetchPluggyItem } = await import("@/lib/pluggy");
     await fetchPluggyItem(FAKE_PLUGGY_ITEM_ID).catch(() => undefined);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+/**
+ * TASK-005 - deleteItemFromPluggy (deleta o Item na Pluggy - primeiro passo
+ * obrigatorio de "desativar um banco", DT-002). Reaproveita o
+ * `PluggyClientMock` hoisted no topo do arquivo (agora com `deleteItem:
+ * deleteItemMock`). Contrato assumido (definido pelo qa nesta task - ver
+ * secao 5 do TASK-005.md - o coder implementa exatamente assim):
+ *
+ *   lib/pluggy.ts
+ *     export class PluggyItemDeleteError extends Error {}
+ *     export async function deleteItemFromPluggy(pluggyItemId: string): Promise<void>
+ *
+ * deleteItemFromPluggy deve:
+ *   - reutilizar a MESMA validacao de CLIENT_ID/CLIENT_SECRET das outras
+ *     funcoes - rejeita com PluggyConfigError SEM instanciar PluggyClient
+ *     quando as credenciais estao ausentes/vazias;
+ *   - quando configurado, chamar `client.deleteItem(pluggyItemId)`
+ *     (node_modules/pluggy-sdk/dist/client.d.ts:65 -
+ *     `deleteItem(id: string): Promise<void>`);
+ *   - em caso de SUCESSO, resolver (undefined);
+ *   - em caso de REJEICAO com o Item ja nao existente na Pluggy, tratar
+ *     como SUCESSO e RESOLVER (nao rejeitar) - Criterio de aceite #4 da
+ *     TASK-005: o objetivo (parar de compartilhar) ja esta satisfeito, nao
+ *     faz sentido travar o arquivamento local por um Item que ja sumiu do
+ *     lado da Pluggy.
+ *     IMPORTANTE (corrigido apos revisao pos-aprovacao - o reviewer
+ *     confirmou contra a API real): o SDK NAO rejeita com `statusCode` na
+ *     raiz do objeto. O shape real de erro de uma chamada `deleteItem` a um
+ *     Item inexistente, capturado numa chamada real, e:
+ *       { message: 'item not found', code: 404,
+ *         codeDescription: 'ITEM_NOT_FOUND', errorId: '<uuid>' }
+ *     Um objeto plano (`constructor: Object`), sem `.response`, sem
+ *     `.statusCode`. O discriminador semantico mais robusto e
+ *     `codeDescription === 'ITEM_NOT_FOUND'` (o `code` numerico 404 tambem
+ *     serve, mas `codeDescription` e mais legivel e menos ambiguo que um
+ *     `code` que a Pluggy usa tanto para HTTP status quanto, em outros
+ *     endpoints, para codigos de erro proprios). A implementacao anterior
+ *     checava `error.statusCode === 404`, que NUNCA e verdadeiro contra o
+ *     shape real - o Criterio de aceite #4 falhava silenciosamente em
+ *     producao. Ver `tests/unit/lib/bank-item-archive.test.ts` e
+ *     `tests/integration/api/items-delete.integration.test.ts` para o mesmo
+ *     shape reaproveitado;
+ *   - em caso de QUALQUER outra falha (rede/timeout, exception, rejeicao
+ *     com objeto plano de erro HTTP que NAO seja o Item-nao-encontrado
+ *     acima), rejeitar com PluggyItemDeleteError, mensagem fixa/generica,
+ *     sem vazar detalhe do SDK - mesmo padrao de
+ *     PluggyConnectTokenError/PluggyItemFetchError;
+ *   - nunca chamar console.log/warn/error em nenhum caminho.
+ */
+
+/**
+ * Shape REAL do erro devolvido por `client.deleteItem` contra um Item que
+ * ja nao existe na Pluggy - capturado pelo orquestrador numa chamada real
+ * `deleteItem` a um item inexistente (revisao pos-aprovacao da TASK-005).
+ * NAO tem `.statusCode` nem `.response` - e um objeto plano.
+ */
+function buildRealPluggyItemNotFoundError(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    message: "item not found",
+    code: 404,
+    codeDescription: "ITEM_NOT_FOUND",
+    errorId: "6f6b6f8a-6f9a-4b7a-9b3a-1c2d3e4f5a6b",
+    ...overrides,
+  };
+}
+
+describe("deleteItemFromPluggy - sucesso (Criterio de aceite #3 da TASK-005)", () => {
+  it("resolve quando client.deleteItem resolve", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    deleteItemMock.mockResolvedValueOnce(undefined);
+
+    const { deleteItemFromPluggy } = await import("@/lib/pluggy");
+
+    await expect(
+      deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID),
+    ).resolves.toBeUndefined();
+  });
+
+  it("instancia o PluggyClient com as credenciais do ambiente e chama client.deleteItem com o pluggyItemId recebido", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    deleteItemMock.mockResolvedValueOnce(undefined);
+
+    const { deleteItemFromPluggy } = await import("@/lib/pluggy");
+    await deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID);
+
+    expect(PluggyClientMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: FAKE_CLIENT_ID,
+        clientSecret: FAKE_CLIENT_SECRET,
+      }),
+    );
+    expect(deleteItemMock).toHaveBeenCalledTimes(1);
+    expect(deleteItemMock).toHaveBeenCalledWith(FAKE_PLUGGY_ITEM_ID);
+  });
+
+  it("nao chama console.log/warn/error no caminho feliz", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    deleteItemMock.mockResolvedValueOnce(undefined);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { deleteItemFromPluggy } = await import("@/lib/pluggy");
+    await deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+describe("deleteItemFromPluggy - credenciais ausentes", () => {
+  it("rejeita com PluggyConfigError quando CLIENT_ID/CLIENT_SECRET estao ausentes, SEM instanciar PluggyClient nem chamar deleteItem", async () => {
+    delete process.env.CLIENT_ID;
+    delete process.env.CLIENT_SECRET;
+
+    const { deleteItemFromPluggy, PluggyConfigError } = await import(
+      "@/lib/pluggy"
+    );
+
+    await expect(
+      deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID),
+    ).rejects.toBeInstanceOf(PluggyConfigError);
+    expect(PluggyClientMock).not.toHaveBeenCalled();
+    expect(deleteItemMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteItemFromPluggy - Item ja nao existe na Pluggy, shape REAL do erro (Criterio de aceite #4 da TASK-005)", () => {
+  it("resolve (NAO rejeita) quando client.deleteItem rejeita com o shape real de 'item not found' (code: 404, codeDescription: 'ITEM_NOT_FOUND', SEM statusCode)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const realNotFoundError = buildRealPluggyItemNotFoundError();
+    // Confirma que o fixture NAO tem `statusCode` - se um `overrides`
+    // futuro reintroduzir esse campo por engano, o teste avisa aqui em vez
+    // de mascarar silenciosamente uma regressao do proprio teste.
+    expect(realNotFoundError).not.toHaveProperty("statusCode");
+    deleteItemMock.mockRejectedValueOnce(realNotFoundError);
+
+    const { deleteItemFromPluggy } = await import("@/lib/pluggy");
+
+    await expect(
+      deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID),
+    ).resolves.toBeUndefined();
+  });
+
+  it("nao chama console.log/warn/error quando trata o Item-nao-encontrado real como sucesso", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    deleteItemMock.mockRejectedValueOnce(buildRealPluggyItemNotFoundError());
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { deleteItemFromPluggy } = await import("@/lib/pluggy");
+    await deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+describe("deleteItemFromPluggy - falha real da Pluggy (NAO e Item-nao-encontrado): rejeita com erro tratado (direcao critica de privacidade)", () => {
+  it("traduz uma rejeicao 'Forbidden' (objeto plano, SEM code: 404 nem codeDescription: 'ITEM_NOT_FOUND') em PluggyItemDeleteError, sem vazar detalhe do SDK", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    // Shape plausivel de outro erro real da Pluggy (nao confirmado campo a
+    // campo como o de 'item not found', mas deliberadamente SEM
+    // `statusCode` - ja confirmado que o SDK nao usa esse campo - e SEM
+    // `code: 404`/`codeDescription: 'ITEM_NOT_FOUND'`, para nao ser
+    // confundido com o caso de sucesso do Criterio 4. Esta e a direcao
+    // CRITICA de privacidade: um erro que NAO e "item ja nao existe"
+    // precisa continuar rejeitando (e portanto nao arquivar nada
+    // localmente - ver tests/unit/lib/bank-item-archive.test.ts e
+    // tests/integration/api/items-delete.integration.test.ts).
+    deleteItemMock.mockRejectedValueOnce({
+      message: "Forbidden for this API key",
+      code: "FORBIDDEN",
+      errorId: "9a1b2c3d-4e5f-4a6b-8c7d-1e2f3a4b5c6d",
+    });
+
+    const { deleteItemFromPluggy, PluggyItemDeleteError } = await import(
+      "@/lib/pluggy"
+    );
+
+    let caughtError: unknown;
+    try {
+      await deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID);
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(PluggyItemDeleteError);
+    const message = (caughtError as Error).message;
+    expect(message.length).toBeGreaterThan(0);
+    expect(message).not.toContain("Forbidden for this API key");
+    expect(message).not.toContain("FORBIDDEN");
+  });
+
+  it("traduz uma excecao de rede/timeout lancada pelo SDK em PluggyItemDeleteError, sem vazar mensagem/stack originais", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const sdkError = new Error(
+      "Timeout awaiting 'request' for 30000ms at connect ETIMEDOUT 200.1.2.3:443",
+    );
+    sdkError.stack =
+      "Error: Timeout\n    at Object.<anonymous> (/app/node_modules/pluggy-sdk/dist/baseApi.js:99:20)";
+    deleteItemMock.mockRejectedValueOnce(sdkError);
+
+    const { deleteItemFromPluggy, PluggyItemDeleteError } = await import(
+      "@/lib/pluggy"
+    );
+
+    let caughtError: unknown;
+    try {
+      await deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID);
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(PluggyItemDeleteError);
+    const message = (caughtError as Error).message;
+    expect(message).not.toContain("ETIMEDOUT");
+    expect(message).not.toContain("Timeout awaiting");
+    expect(message).not.toContain(".ts:");
+    expect(message).not.toContain(".js:");
+  });
+
+  it("traduz uma falha 500 da Pluggy em PluggyItemDeleteError", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    deleteItemMock.mockRejectedValueOnce(new Error("Internal Server Error"));
+
+    const { deleteItemFromPluggy, PluggyItemDeleteError } = await import(
+      "@/lib/pluggy"
+    );
+
+    await expect(
+      deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID),
+    ).rejects.toBeInstanceOf(PluggyItemDeleteError);
+  });
+
+  it("nao chama console.log/warn/error mesmo quando a Pluggy falha de verdade", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    deleteItemMock.mockRejectedValueOnce(new Error("boom"));
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { deleteItemFromPluggy } = await import("@/lib/pluggy");
+    await deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID).catch(() => undefined);
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();

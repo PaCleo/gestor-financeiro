@@ -414,6 +414,51 @@ npx tsc --noEmit                                                          # conf
 npx eslint tests/unit/lib/bank-item-state.test.ts tests/unit/lib/pluggy.test.ts tests/unit/api/items-route.test.ts tests/integration/bank-item-creation.integration.test.ts tests/integration/api/items.integration.test.ts tests/unit/schema/bank-item-execution-status.test.ts tests/fixtures/db.ts
 ```
 
+### Correção pós-implementação (TASK-005 adicionou `BankItem.archivedAt`)
+
+A TASK-005 (fecha a Fase 1, DT-013 - desativar/arquivar um banco) adicionou
+`archivedAt DateTime?` (nullable) ao model `BankItem`. Isso quebrou
+`tests/integration/bank-item-creation.integration.test.ts` →
+`"mesmo que fetchPluggyItem resolva com um campo extra parecido com PII
+(defesa em profundidade), nenhuma coluna do BankItem grava esse valor"`,
+porque essa asserção fazia `deepEqual` de uma lista exaustiva de nomes de
+coluna. O coder corretamente não editou o teste e parou para reportar -
+o tripwire funcionou como projetado (coluna nova força revisão explícita
+antes da suíte voltar a verde).
+
+**Pergunta de design respondida (avaliação pedida pelo orquestrador antes
+de simplesmente adicionar a coluna à lista):** este teste já protegia por
+**valor**, não só por nome - a linha
+`expect(JSON.stringify(row)).not.toContain(FAKE_CPF)` (que já existia,
+antes desta correção) verifica o CPF fabricado contra o **conteúdo**
+serializado do row completo, sem depender de quantas colunas existem ou
+como se chamam. Essa é a asserção com poder de detecção real pela lição do
+DT-011: ela falharia se o CPF aparecesse gravado em **qualquer** coluna -
+existente ou futura - independente do `deepEqual` de nomes. Só *depois*
+dela é que vem o `Object.keys(row).sort()).toEqual([...])` que quebrou -
+essa é um **complemento**, não a defesa primária: um tripwire de *mudança
+de schema*, não de *vazamento de valor*. Sozinho, o `deepEqual` de nomes
+não prova ausência de vazamento (uma coluna já existente poderia, em
+tese, passar a conter o CPF sem que a lista de nomes mudasse nem um
+pouco) - quem prova isso é o `JSON.stringify` que já estava lá. As duas
+asserções cobrem propriedades diferentes e complementares: **valor**
+(vazamento real, a garantia que o Critério 7 exige) e **forma** (mudança
+de schema que precisa de uma decisão humana consciente - "essa coluna
+nova pode carregar PII?").
+
+**Correção aplicada:** adicionei `"archivedAt"` à lista esperada (coluna
+legítima, nullable, não é PII - confirmado lendo o comentário de cabeçalho
+de `prisma/schema.prisma` sobre a TASK-005/DT-013) e documentei a
+distinção de design acima como comentário no próprio teste, para que o
+próximo reviewer/coder entenda por que as duas asserções coexistem em vez
+de assumir que a lista de nomes é redundante com o `JSON.stringify` (ou
+vice-versa). Nenhuma outra asserção do arquivo foi tocada.
+
+**Verificação:** `npm test` → **23 arquivos, 222/222 testes passando**
+(suíte completa do projeto após TASK-004 e TASK-005, sem nenhuma falha).
+`npx eslint tests/integration/bank-item-creation.integration.test.ts` e
+`npx tsc --noEmit` → limpos.
+
 ### Mapeamento critério de aceite → teste
 
 | Critério (seção 3) | Arquivo | Teste(s) |
