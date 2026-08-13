@@ -32,7 +32,7 @@ O objetivo do MVP é responder três perguntas todos os dias:
 | Contas fixas | Cadastrar recorrências mensais (aluguel, luz, água, gás, condomínio…) com dia de vencimento e valor estimado |
 | Marcar como pago | Dar baixa numa conta fixa — manualmente ou vinculando a uma transação importada |
 | Dashboard | Total do mês por categoria, contas pendentes, saldo por conta |
-| Categorias | **Categorização manual** — a categorização automática da Pluggy exige assinatura Pro, que não temos: o campo `category` chega `null`. Ver seção 11. |
+| Categorias | Categorização da Pluggy (**veio preenchida nos dados reais, a confirmar — DT-010**) + recategorização manual via `categoryOverride`. Ver seção 11. |
 
 ### Fica para depois ⏭️
 - Múltiplos usuários / login social (MVP é single-user com auth simples)
@@ -321,7 +321,7 @@ tipo de conta.
 | `transaction.amount` | number, **sinal depende do tipo de conta** | `amount` (Decimal) | **Normalizar o sinal** — ver aviso acima |
 | `transaction.date` | ISO8601 UTC | `date` | Direto, atenção a fuso na exibição |
 | `transaction.description` / `descriptionRaw` | string | `description` | Preferir `description`; `descriptionRaw` como fallback |
-| `transaction.category` | string \| **null sem Pro** | `category` | **Sempre `null` no nosso plano.** A categoria real vem de `categoryOverride` (manual) |
+| `transaction.category` | string \| null — **veio PREENCHIDA nos dados reais** | `category` | Persistir cru. A hipótese "sempre null sem Pro" foi **contradita** pela sondagem (432/432 com categoria). Ver DT-010 (reaberto) e o bloco de sondagem acima. `categoryOverride` segue como recategorização manual |
 | `transaction.type` | `DEBIT` \| `CREDIT` | — | Usar para validar o sinal normalizado |
 | `transaction.status` | `PENDING` \| `POSTED` | — | Decidir se importamos `PENDING` (some/muda depois) |
 | `transaction.paymentData.paymentMethod` | `PIX`/`TED`/`DOC`/`BOLETO` | `method` | Direto quando presente |

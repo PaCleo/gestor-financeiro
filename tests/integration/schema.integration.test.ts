@@ -239,6 +239,124 @@ describe("BankItem.archivedAt - coluna nullable no Postgres real (Criterio 1 da 
   });
 });
 
+describe("Account.balance - coluna nullable numeric(14,2) no Postgres real (Criterio 1 da TASK-006, DT-013)", () => {
+  it("a coluna balance existe, e nullable e numeric com precisao 14 e escala 2", async () => {
+    const columns = await prisma.$queryRaw<
+      {
+        column_name: string;
+        is_nullable: string;
+        data_type: string;
+        numeric_precision: number | null;
+        numeric_scale: number | null;
+      }[]
+    >`
+      SELECT column_name, is_nullable, data_type, numeric_precision, numeric_scale
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'Account'
+        AND column_name = 'balance'
+    `;
+
+    expect(columns).toHaveLength(1);
+    expect(columns[0].is_nullable).toBe("YES");
+    expect(columns[0].data_type).toBe("numeric");
+    expect(columns[0].numeric_precision).toBe(14);
+    expect(columns[0].numeric_scale).toBe(2);
+  });
+
+  it("uma Account criada sem balance persiste com o valor NULL (nao quebra insercao existente)", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    const account = await prisma.account.create({
+      data: buildAccount(bankItem.id, { balance: undefined }),
+    });
+
+    expect(account.balance).toBeNull();
+  });
+
+  it("grava e le um balance negativo (cheque especial usado) sem erro de arredondamento", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    const account = await prisma.account.create({
+      data: buildAccount(bankItem.id, { balance: "-820.45" }),
+    });
+
+    expect(account.balance?.toFixed(2)).toBe("-820.45");
+  });
+
+  it("a coluna Account nao expoe taxNumber no Postgres real (Criterio 6 da TASK-006, DT-017)", async () => {
+    const columns = await prisma.$queryRaw<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'Account'
+    `;
+    const columnNames = columns.map((c) => c.column_name.toLowerCase());
+
+    expect(columnNames).not.toContain("taxnumber");
+  });
+});
+
+describe('Transaction.status - coluna NOT NULL com default "POSTED" no Postgres real (Criterio 1 da TASK-006, DT-013)', () => {
+  it("a coluna status existe, NAO e nullable e tem default 'POSTED'", async () => {
+    const columns = await prisma.$queryRaw<
+      {
+        column_name: string;
+        is_nullable: string;
+        column_default: string | null;
+      }[]
+    >`
+      SELECT column_name, is_nullable, column_default
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'Transaction'
+        AND column_name = 'status'
+    `;
+
+    expect(columns).toHaveLength(1);
+    expect(columns[0].is_nullable).toBe("NO");
+    expect(columns[0].column_default).toMatch(/POSTED/);
+  });
+
+  it("uma Transaction criada sem status explicito persiste com o default POSTED (nao quebra insercao existente)", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    const account = await prisma.account.create({
+      data: buildAccount(bankItem.id),
+    });
+    const created = await prisma.transaction.create({
+      data: buildTransaction(account.id, { status: undefined }),
+    });
+
+    expect(created.status).toBe("POSTED");
+  });
+
+  it("aceita status PENDING explicito", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    const account = await prisma.account.create({
+      data: buildAccount(bankItem.id),
+    });
+    const created = await prisma.transaction.create({
+      data: buildTransaction(account.id, { status: "PENDING" }),
+    });
+
+    expect(created.status).toBe("PENDING");
+  });
+
+  it("a tabela Transaction nao expoe nenhuma coluna de PII de paymentData (payer/receiver/documentNumber) no Postgres real (Criterio 6, DT-017)", async () => {
+    const columns = await prisma.$queryRaw<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'Transaction'
+    `;
+    const columnNames = columns.map((c) => c.column_name.toLowerCase());
+
+    for (const forbidden of [
+      "paymentdata",
+      "documentnumber",
+      "payer",
+      "receiver",
+      "taxnumber",
+    ]) {
+      expect(columnNames).not.toContain(forbidden);
+    }
+  });
+});
+
 describe("Edge cases de integridade", () => {
   it("rejeita Transaction com accountId inexistente (integridade referencial)", async () => {
     let caughtError: unknown;

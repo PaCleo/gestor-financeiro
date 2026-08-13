@@ -43,6 +43,19 @@ export function buildAccount(
     bankItemId,
     name: "Banco Teste Conta Corrente",
     type: "CHECKING",
+    // TASK-006: Account ganha `balance Decimal? @db.Decimal(14,2)`
+    // (nullable, DT-013 - e tambem correto por natureza: uma Account
+    // manual, sem pluggyAccountId, pode nao ter saldo conhecido). Default
+    // `undefined` (mesmo truque de `archivedAt` na TASK-005): Prisma trata
+    // uma chave com valor `undefined` como "nao informada", entao os
+    // testes de TASK-001/002/005 que criam Account via este fixture SEM
+    // saber desse campo novo continuam funcionando ANTES da migration
+    // desta task existir (um valor concreto aqui quebraria a suite inteira
+    // em RED, ja que o Prisma Client rejeita qualquer chave que a DMMF
+    // atual nao reconhece - nao so a chave nova, a chamada toda). So
+    // sobrescrito nos testes desta task que se importam com o valor (ver
+    // tests/integration/schema.integration.test.ts).
+    balance: undefined,
     ...overrides,
   };
 }
@@ -60,6 +73,15 @@ export function buildTransaction(
     category: "Alimentação",
     source: "PLUGGY",
     method: "DEBIT",
+    // TASK-006: Transaction ganha `status String @default("POSTED")`
+    // (DT-013). Default `undefined` aqui pelo MESMO motivo de
+    // `Account.balance` acima - mesmo o schema definindo `@default("POSTED")`
+    // no Postgres, o Prisma Client so aplica esse default quando a chave
+    // fica de fora da chamada (`undefined` vira "nao informada"); um valor
+    // concreto quebraria a suite inteira em RED, antes da migration desta
+    // task existir. Sobrescrito nos testes desta task que se importam com
+    // o valor (ex.: status PENDING).
+    status: undefined,
     ...overrides,
   };
 }

@@ -32,7 +32,8 @@
 
 | Task | Título | Status |
 |---|---|---|
-| — | `/api/sync` com upsert por `pluggyTransactionId`, tela de transações com filtros | PENDENTE |
+| [TASK-006](./tasks/TASK-006.md) | Sync de Accounts e Transactions (`POST /api/sync`) | CONCLUÍDA |
+| — | Tela de transações com filtros (fecha a Fase 2) | PENDENTE |
 
 ## Fase 3 — Lançamentos manuais
 **Critério de pronto:** insiro um Pix manual e ele aparece junto com o resto.
