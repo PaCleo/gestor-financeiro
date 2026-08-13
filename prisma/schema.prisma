@@ -10,6 +10,14 @@
 // para relacao obrigatoria - confirmado via pg_constraint), por isso
 // `prisma migrate dev` nao gerou uma nova migration para essa mudanca (ver
 // TASK-002.md secao 6).
+//
+// TASK-004: BankItem ganha `executionStatus String` (obrigatorio, simetrico a
+// `status`) - resolve o DT-009. A Pluggy expoe dois campos de estado
+// distintos (`item.status` e `item.executionStatus`); um BankItem so e
+// criado depois de buscar o Item de verdade na Pluggy (`fetchPluggyItem`),
+// que sempre devolve os dois campos - nao ha caminho legitimo para persistir
+// um BankItem sem `executionStatus` conhecido, por isso obrigatorio (nao
+// `String?`) e correto pelo modelo, nao so mais facil de migrar.
 
 generator client {
   provider = "prisma-client-js"
@@ -20,12 +28,13 @@ datasource db {
 }
 
 model BankItem {
-  id           String    @id @default(cuid())
-  pluggyItemId String    @unique
-  institution  String
-  status       String
-  lastSyncAt   DateTime?
-  accounts     Account[]
+  id              String    @id @default(cuid())
+  pluggyItemId    String    @unique
+  institution     String
+  status          String
+  executionStatus String
+  lastSyncAt      DateTime?
+  accounts        Account[]
 }
 
 model Account {

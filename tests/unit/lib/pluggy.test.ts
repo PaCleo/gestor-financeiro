@@ -41,30 +41,72 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  *     por acidente vierem no payload resolvido (Criterio de aceite #3);
  *   - nunca chamar console.log/warn/error com o payload da Pluggy
  *     (Criterio de aceite #8 - o retorno contem dados financeiros reais).
+ *
+ * TASK-004 (Persistir o BankItem e modelar o estado do Item) estende este
+ * mesmo arquivo com testes de `fetchPluggyItem`, a nova funcao de
+ * `lib/pluggy.ts` que busca o Item na Pluggy (ver describes no final do
+ * arquivo). Contrato assumido para essa parte:
+ *
+ *   lib/pluggy.ts
+ *     export class PluggyItemFetchError extends Error {}
+ *     export async function fetchPluggyItem(
+ *       pluggyItemId: string,
+ *     ): Promise<{ institution: string; status: string; executionStatus: string }>
+ *
+ * fetchPluggyItem deve:
+ *   - reutilizar a MESMA validacao de CLIENT_ID/CLIENT_SECRET de
+ *     createConnectToken - rejeita com PluggyConfigError (a mesma classe ja
+ *     exportada) SEM instanciar PluggyClient quando as credenciais estao
+ *     ausentes/vazias;
+ *   - quando configurado, chamar `client.fetchItem(pluggyItemId)`
+ *     (node_modules/pluggy-sdk/dist/client.d.ts:31) e devolver SOMENTE
+ *     `{ institution: item.connector.name, status: item.status,
+ *     executionStatus: item.executionStatus }` - nenhum outro campo do
+ *     `Item` (nem `item.error`, `item.parameter`, `item.userAction`, nem
+ *     qualquer campo de PII que por acidente venha anexado ao payload -
+ *     Criterio de aceite #7 desta task, sobre nao persistir `taxNumber`/CPF)
+ *     e repassado adiante;
+ *   - traduzir qualquer falha do SDK (item nao encontrado/404, 500, timeout,
+ *     excecao ou rejeicao com objeto plano de erro HTTP) em
+ *     PluggyItemFetchError, mensagem fixa/generica, sem vazar stack trace
+ *     nem detalhe do SDK - mesmo padrao de PluggyConnectTokenError;
+ *   - nunca chamar console.log/warn/error em nenhum caminho.
  */
 
-const { PluggyClientMock, createConnectTokenMock } = vi.hoisted(() => {
-  const createConnectTokenMock = vi.fn();
-  // IMPORTANTE: precisa ser uma `function` normal, NAO uma arrow function.
-  // O SDK real (`node_modules/pluggy-sdk/dist/client.js`) e
-  // `class PluggyClient extends BaseApi`, ou seja, so pode ser chamado com
-  // `new` - e e exatamente assim que o contrato desta task (secao 5 do
-  // TASK-003.md) manda `lib/pluggy.ts` instanciar (`new PluggyClient({...})`).
-  // Arrow functions nunca sao construiveis em JavaScript
-  // (`Reflect.construct(() => {}, [])` lanca `TypeError: ... is not a
-  // constructor`), e o dispatcher de `new` do @vitest/spy usa
-  // `Reflect.construct` sobre a implementation - um mock com arrow function
-  // lancaria incondicionalmente em QUALQUER chamada com `new`, independente
-  // do que o coder escrever do lado de producao. Usar `function` normal aqui
-  // faz o mock se comportar como uma classe de verdade (construivel),
-  // preservando o teste do contrato real sem "consertar" o problema
-  // trocando `new PluggyClient(...)` por uma chamada sem `new` no lado de
-  // producao (isso seria mascarar um erro real de integracao).
-  const PluggyClientMock = vi.fn().mockImplementation(function () {
-    return { createConnectToken: createConnectTokenMock };
-  });
-  return { PluggyClientMock, createConnectTokenMock };
-});
+const { PluggyClientMock, createConnectTokenMock, fetchItemMock } = vi.hoisted(
+  () => {
+    const createConnectTokenMock = vi.fn();
+    // TASK-004: `lib/pluggy.ts` ganha `fetchPluggyItem`, que chama
+    // `client.fetchItem(pluggyItemId)` (node_modules/pluggy-sdk/dist/client.d.ts:31 -
+    // `fetchItem(id: string): Promise<Item>`). Mockado no MESMO objeto
+    // devolvido pelo construtor, ao lado de `createConnectToken`, para
+    // reaproveitar o mesmo `PluggyClientMock` construivel (ver nota abaixo)
+    // em vez de duplicar o mock da classe inteira num segundo arquivo.
+    const fetchItemMock = vi.fn();
+    // IMPORTANTE: precisa ser uma `function` normal, NAO uma arrow function.
+    // O SDK real (`node_modules/pluggy-sdk/dist/client.js`) e
+    // `class PluggyClient extends BaseApi`, ou seja, so pode ser chamado com
+    // `new` - e e exatamente assim que o contrato desta task (secao 5 do
+    // TASK-003.md) manda `lib/pluggy.ts` instanciar (`new PluggyClient({...})`).
+    // Arrow functions nunca sao construiveis em JavaScript
+    // (`Reflect.construct(() => {}, [])` lanca `TypeError: ... is not a
+    // constructor`), e o dispatcher de `new` do @vitest/spy usa
+    // `Reflect.construct` sobre a implementation - um mock com arrow function
+    // lancaria incondicionalmente em QUALQUER chamada com `new`, independente
+    // do que o coder escrever do lado de producao. Usar `function` normal aqui
+    // faz o mock se comportar como uma classe de verdade (construivel),
+    // preservando o teste do contrato real sem "consertar" o problema
+    // trocando `new PluggyClient(...)` por uma chamada sem `new` no lado de
+    // producao (isso seria mascarar um erro real de integracao).
+    const PluggyClientMock = vi.fn().mockImplementation(function () {
+      return {
+        createConnectToken: createConnectTokenMock,
+        fetchItem: fetchItemMock,
+      };
+    });
+    return { PluggyClientMock, createConnectTokenMock, fetchItemMock };
+  },
+);
 
 vi.mock("pluggy-sdk", () => ({
   PluggyClient: PluggyClientMock,
@@ -363,6 +405,287 @@ describe("createConnectToken - falha da Pluggy (Cenario 4 / Criterio 5)", () => 
 
     const { createConnectToken } = await import("@/lib/pluggy");
     await createConnectToken().catch(() => undefined);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+/**
+ * TASK-004 - fetchPluggyItem (busca o Item na Pluggy para persistir o
+ * BankItem). Reaproveita o `PluggyClientMock` hoisted no topo do arquivo
+ * (agora com `fetchItem: fetchItemMock` no objeto devolvido pelo
+ * construtor) - nenhuma chamada de rede real e possivel aqui tambem.
+ */
+
+const FAKE_PLUGGY_ITEM_ID = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+
+// CPF fabricado para teste - formato valido, NUNCA um CPF real. Usado so
+// para provar que `fetchPluggyItem` tem poder de deteccao real contra
+// vazamento de PII (Criterio de aceite #7 da TASK-004): o payload mockado
+// abaixo REALMENTE contem esse valor (licao do DT-011/TASK-003 - uma
+// asserção de nao-vazamento so tem valor se o payload testado pudesse
+// conter o valor proibido).
+const FAKE_CPF = "123.456.789-00";
+
+/**
+ * Objeto no formato real de `Item` (node_modules/pluggy-sdk/dist/types/item.d.ts),
+ * com todos os campos documentados preenchidos - para que os testes de
+ * "so devolve institution/status/executionStatus" tenham poder de deteccao
+ * contra QUALQUER um desses campos vazando, nao so contra um payload vazio
+ * que trivialmente nao vazaria nada.
+ */
+function buildMockPluggyItemResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    id: FAKE_PLUGGY_ITEM_ID,
+    connector: {
+      id: 201,
+      name: "Banco Teste",
+      institutionUrl: "https://banco-teste.example.com",
+      imageUrl: "https://banco-teste.example.com/logo.png",
+      primaryColor: "#000000",
+      type: "PERSONAL_BANK",
+      country: "BR",
+      credentials: [],
+      hasMFA: false,
+      health: { status: "ONLINE", stage: null },
+    },
+    status: "UPDATED",
+    statusDetail: null,
+    error: null,
+    executionStatus: "SUCCESS",
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-07-20T00:00:00.000Z"),
+    lastUpdatedAt: new Date("2026-07-20T00:00:00.000Z"),
+    parameter: null,
+    webhookUrl: null,
+    clientUserId: null,
+    userAction: null,
+    consecutiveFailedLoginAttempts: 0,
+    nextAutoSyncAt: null,
+    consentExpiresAt: null,
+    ...overrides,
+  };
+}
+
+describe("fetchPluggyItem - sucesso (Criterio de aceite #1/#3 da TASK-004)", () => {
+  it("busca o Item na Pluggy e retorna institution/status/executionStatus", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchItemMock.mockResolvedValueOnce(
+      buildMockPluggyItemResponse({
+        connector: { name: "Banco Teste" },
+        status: "UPDATED",
+        executionStatus: "SUCCESS",
+      }),
+    );
+
+    const { fetchPluggyItem } = await import("@/lib/pluggy");
+
+    await expect(fetchPluggyItem(FAKE_PLUGGY_ITEM_ID)).resolves.toEqual({
+      institution: "Banco Teste",
+      status: "UPDATED",
+      executionStatus: "SUCCESS",
+    });
+  });
+
+  it("chama client.fetchItem com o pluggyItemId recebido, instanciando o PluggyClient com as credenciais do ambiente", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchItemMock.mockResolvedValueOnce(buildMockPluggyItemResponse());
+
+    const { fetchPluggyItem } = await import("@/lib/pluggy");
+    await fetchPluggyItem(FAKE_PLUGGY_ITEM_ID);
+
+    expect(PluggyClientMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: FAKE_CLIENT_ID,
+        clientSecret: FAKE_CLIENT_SECRET,
+      }),
+    );
+    expect(fetchItemMock).toHaveBeenCalledTimes(1);
+    expect(fetchItemMock).toHaveBeenCalledWith(FAKE_PLUGGY_ITEM_ID);
+  });
+
+  it("retorna SOMENTE institution/status/executionStatus mesmo que o Item traga PII (taxNumber) ou qualquer outro campo sensivel (Criterio de aceite #7 - defesa contra vazamento)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    // Payload defensivo: o Item real da Pluggy NAO documenta um campo
+    // `taxNumber` (esse e um campo de Account - ver docs/PREMISSA.md secao
+    // 11), mas simulamos aqui um payload contaminado/inesperado (erro de
+    // integracao futuro, versao nova da API, etc.) para provar que
+    // `fetchPluggyItem` reconstroi o objeto de retorno campo a campo em vez
+    // de espalhar (`...item`) o que a Pluggy devolver - a mesma tecnica de
+    // defesa em profundidade da TASK-003 para `createConnectToken`.
+    fetchItemMock.mockResolvedValueOnce(
+      buildMockPluggyItemResponse({
+        taxNumber: FAKE_CPF,
+        accountHolderDocument: FAKE_CPF,
+        error: {
+          code: "UNEXPECTED_ERROR",
+          message: "erro interno que nao deveria vazar",
+        },
+        userAction: {
+          instructions: "informacao sensivel de instrucao ao usuario",
+          type: "qr",
+        },
+      }),
+    );
+
+    const { fetchPluggyItem } = await import("@/lib/pluggy");
+    const result = await fetchPluggyItem(FAKE_PLUGGY_ITEM_ID);
+
+    expect(Object.keys(result).sort()).toEqual([
+      "executionStatus",
+      "institution",
+      "status",
+    ]);
+    const rawResult = JSON.stringify(result);
+    expect(rawResult).not.toContain(FAKE_CPF);
+    expect(rawResult).not.toContain("taxNumber");
+    expect(rawResult).not.toContain("accountHolderDocument");
+    expect(rawResult).not.toContain("UNEXPECTED_ERROR");
+  });
+
+  it("nao chama console.log/warn/error no caminho feliz", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchItemMock.mockResolvedValueOnce(buildMockPluggyItemResponse());
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { fetchPluggyItem } = await import("@/lib/pluggy");
+    await fetchPluggyItem(FAKE_PLUGGY_ITEM_ID);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+describe("fetchPluggyItem - credenciais ausentes", () => {
+  it("rejeita com PluggyConfigError quando CLIENT_ID/CLIENT_SECRET estao ausentes, SEM instanciar PluggyClient nem chamar fetchItem", async () => {
+    delete process.env.CLIENT_ID;
+    delete process.env.CLIENT_SECRET;
+
+    const { fetchPluggyItem, PluggyConfigError } = await import(
+      "@/lib/pluggy"
+    );
+
+    await expect(fetchPluggyItem(FAKE_PLUGGY_ITEM_ID)).rejects.toBeInstanceOf(
+      PluggyConfigError,
+    );
+    expect(PluggyClientMock).not.toHaveBeenCalled();
+    expect(fetchItemMock).not.toHaveBeenCalled();
+  });
+
+  it("rejeita com PluggyConfigError quando as credenciais sao string vazia", async () => {
+    process.env.CLIENT_ID = "";
+    process.env.CLIENT_SECRET = "";
+
+    const { fetchPluggyItem, PluggyConfigError } = await import(
+      "@/lib/pluggy"
+    );
+
+    await expect(fetchPluggyItem(FAKE_PLUGGY_ITEM_ID)).rejects.toBeInstanceOf(
+      PluggyConfigError,
+    );
+  });
+});
+
+describe("fetchPluggyItem - falha da Pluggy (item nao encontrado, 500, timeout)", () => {
+  it("traduz uma rejeicao 404 (Item nao encontrado) em PluggyItemFetchError, sem vazar detalhe do SDK", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchItemMock.mockRejectedValueOnce({
+      message: "Item not found",
+      code: "NOT_FOUND",
+      statusCode: 404,
+    });
+
+    const { fetchPluggyItem, PluggyItemFetchError } = await import(
+      "@/lib/pluggy"
+    );
+
+    let caughtError: unknown;
+    try {
+      await fetchPluggyItem(FAKE_PLUGGY_ITEM_ID);
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(PluggyItemFetchError);
+    const message = (caughtError as Error).message;
+    expect(message.length).toBeGreaterThan(0);
+    expect(message).not.toContain("Item not found");
+    expect(message).not.toContain("NOT_FOUND");
+  });
+
+  it("traduz uma excecao de rede/timeout lancada pelo SDK em PluggyItemFetchError, sem vazar mensagem/stack originais", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const sdkError = new Error(
+      "Timeout awaiting 'request' for 30000ms at connect ETIMEDOUT 200.1.2.3:443",
+    );
+    sdkError.stack =
+      "Error: Timeout\n    at Object.<anonymous> (/app/node_modules/pluggy-sdk/dist/baseApi.js:99:20)";
+    fetchItemMock.mockRejectedValueOnce(sdkError);
+
+    const { fetchPluggyItem, PluggyItemFetchError } = await import(
+      "@/lib/pluggy"
+    );
+
+    let caughtError: unknown;
+    try {
+      await fetchPluggyItem(FAKE_PLUGGY_ITEM_ID);
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(PluggyItemFetchError);
+    const message = (caughtError as Error).message;
+    expect(message).not.toContain("ETIMEDOUT");
+    expect(message).not.toContain("Timeout awaiting");
+    expect(message).not.toContain(".ts:");
+    expect(message).not.toContain(".js:");
+  });
+
+  it("traduz uma falha 500 da Pluggy em PluggyItemFetchError", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchItemMock.mockRejectedValueOnce(new Error("Internal Server Error"));
+
+    const { fetchPluggyItem, PluggyItemFetchError } = await import(
+      "@/lib/pluggy"
+    );
+
+    await expect(fetchPluggyItem(FAKE_PLUGGY_ITEM_ID)).rejects.toBeInstanceOf(
+      PluggyItemFetchError,
+    );
+  });
+
+  it("nao chama console.log/warn/error mesmo quando a Pluggy falha", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchItemMock.mockRejectedValueOnce(new Error("boom"));
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { fetchPluggyItem } = await import("@/lib/pluggy");
+    await fetchPluggyItem(FAKE_PLUGGY_ITEM_ID).catch(() => undefined);
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();

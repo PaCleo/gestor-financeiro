@@ -69,3 +69,68 @@ export async function createConnectToken(
     throw new PluggyConnectTokenError();
   }
 }
+
+/**
+ * Erro de dominio: falha ao buscar o Item na Pluggy (`client.fetchItem`) -
+ * item nao encontrado (404), rede/timeout, HTTP 4xx/5xx do lado da Pluggy.
+ * Mensagem fixa e generica - mesmo motivo de `PluggyConnectTokenError`: o
+ * texto de erro do fornecedor nao e confiavel para expor ao usuario
+ * (Criterio de aceite #5/#6 da TASK-004: "sem vazar detalhe do SDK").
+ */
+export class PluggyItemFetchError extends Error {
+  constructor() {
+    super(
+      "Nao foi possivel obter os dados do banco conectado. Tente novamente em instantes.",
+    );
+    this.name = "PluggyItemFetchError";
+  }
+}
+
+/**
+ * Busca o Item na Pluggy (usado para persistir o `BankItem` - ver
+ * lib/bank-item.ts, TASK-004). Resolve o DT-009: devolve os DOIS campos de
+ * estado da Pluggy (`status` e `executionStatus`) separadamente, em vez de
+ * colapsar num so.
+ *
+ * - Reutiliza a MESMA validacao de `CLIENT_ID`/`CLIENT_SECRET` de
+ *   `createConnectToken` - rejeita com `PluggyConfigError` SEM instanciar
+ *   `PluggyClient` quando as credenciais estao ausentes/vazias (Criterio de
+ *   aceite #8: nenhuma tentativa de chamada ao SDK nesse caminho).
+ * - Quando configurado: `client.fetchItem(pluggyItemId)`
+ *   (node_modules/pluggy-sdk/dist/client.d.ts:31) e devolve SOMENTE
+ *   `{ institution: item.connector.name, status: item.status,
+ *   executionStatus: item.executionStatus }` - nenhum outro campo do `Item`
+ *   (nem `item.error`, `item.parameter`, `item.userAction`, nem qualquer
+ *   campo de PII que por acidente venha anexado ao payload) passa adiante
+ *   (Criterio de aceite #7 - o `Item` real da Pluggy nao documenta
+ *   `taxNumber`, mas reconstruir campo a campo e a defesa em profundidade
+ *   contra qualquer contaminacao futura do payload).
+ * - Qualquer falha (item nao encontrado/404, 500, timeout, excecao ou
+ *   rejeicao com objeto plano de erro HTTP) vira `PluggyItemFetchError`,
+ *   mensagem fixa/generica, sem stack trace nem detalhe do SDK.
+ * - Nenhum `console.*` em nenhum caminho.
+ */
+export async function fetchPluggyItem(pluggyItemId: string): Promise<{
+  institution: string;
+  status: string;
+  executionStatus: string;
+}> {
+  const clientId = process.env.CLIENT_ID;
+  const clientSecret = process.env.CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new PluggyConfigError();
+  }
+
+  try {
+    const client = new PluggyClient({ clientId, clientSecret });
+    const item = await client.fetchItem(pluggyItemId);
+    return {
+      institution: item.connector.name,
+      status: item.status,
+      executionStatus: item.executionStatus,
+    };
+  } catch {
+    throw new PluggyItemFetchError();
+  }
+}
