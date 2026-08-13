@@ -32,7 +32,7 @@
 
 | Task | Título | Status |
 |---|---|---|
-| [TASK-006](./tasks/TASK-006.md) | Sync de Accounts e Transactions (`POST /api/sync`) | EM ANDAMENTO |
+| [TASK-006](./tasks/TASK-006.md) | Sync de Accounts e Transactions (`POST /api/sync`) | CONCLUÍDA |
 | — | Tela de transações com filtros (fecha a Fase 2) | PENDENTE |
 
 ## Fase 3 — Lançamentos manuais

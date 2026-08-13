@@ -1,4 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  FAKE_ACCOUNT_HOLDER_CPF,
+  FAKE_PAYER_CPF,
+  FAKE_RECEIVER_CNPJ,
+  buildMockPluggyAccountResponse,
+  buildMockPluggyCreditCardAccountResponse,
+  buildRealCreditCardPurchaseTransaction,
+  buildTransactionWithPaymentData,
+} from "../../fixtures/pluggy";
 
 /**
  * Testes unitarios de lib/pluggy.ts (TASK-003 - Connect Token server-side).
@@ -78,6 +87,9 @@ const {
   createConnectTokenMock,
   fetchItemMock,
   deleteItemMock,
+  fetchAccountsMock,
+  fetchAllTransactionsMock,
+  fetchTransactionsMock,
 } = vi.hoisted(() => {
     const createConnectTokenMock = vi.fn();
     // TASK-004: `lib/pluggy.ts` ganha `fetchPluggyItem`, que chama
@@ -92,6 +104,17 @@ const {
     // `deleteItem(id: string): Promise<void>`). Mesma logica de reaproveitar
     // o mesmo `PluggyClientMock` construivel.
     const deleteItemMock = vi.fn();
+    // TASK-006: `lib/pluggy.ts` ganha `fetchPluggyAccounts` (chama
+    // `client.fetchAccounts(itemId)`, node_modules/pluggy-sdk/dist/client.d.ts:71 -
+    // devolve `PageResponse<Account>`) e `fetchPluggyAllTransactions`
+    // (chama `client.fetchAllTransactions(accountId, options)`,
+    // client.d.ts:106 - devolve `Transaction[]` ja com o cursor todo
+    // varrido internamente, resolvendo o DT-008 de graca). `fetchTransactionsMock`
+    // existe SO para provar que o endpoint deprecado (`fetchTransactions`,
+    // paginacao por pagina) NUNCA e chamado - ver describe dedicado abaixo.
+    const fetchAccountsMock = vi.fn();
+    const fetchAllTransactionsMock = vi.fn();
+    const fetchTransactionsMock = vi.fn();
     // IMPORTANTE: precisa ser uma `function` normal, NAO uma arrow function.
     // O SDK real (`node_modules/pluggy-sdk/dist/client.js`) e
     // `class PluggyClient extends BaseApi`, ou seja, so pode ser chamado com
@@ -112,6 +135,9 @@ const {
         createConnectToken: createConnectTokenMock,
         fetchItem: fetchItemMock,
         deleteItem: deleteItemMock,
+        fetchAccounts: fetchAccountsMock,
+        fetchAllTransactions: fetchAllTransactionsMock,
+        fetchTransactions: fetchTransactionsMock,
       };
     });
     return {
@@ -119,6 +145,9 @@ const {
       createConnectTokenMock,
       fetchItemMock,
       deleteItemMock,
+      fetchAccountsMock,
+      fetchAllTransactionsMock,
+      fetchTransactionsMock,
     };
   },
 );
@@ -980,6 +1009,545 @@ describe("deleteItemFromPluggy - falha real da Pluggy (NAO e Item-nao-encontrado
 
     const { deleteItemFromPluggy } = await import("@/lib/pluggy");
     await deleteItemFromPluggy(FAKE_PLUGGY_ITEM_ID).catch(() => undefined);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+/**
+ * TASK-006 - fetchPluggyAccounts e fetchPluggyAllTransactions (sync de
+ * Accounts/Transactions). Reaproveitam o `PluggyClientMock` hoisted no topo
+ * do arquivo (agora com `fetchAccounts`/`fetchAllTransactions`/
+ * `fetchTransactions` no objeto devolvido pelo construtor).
+ *
+ * Contrato assumido (definido pelo qa nesta task - ver secao 5 do
+ * TASK-006.md - o coder implementa exatamente assim):
+ *
+ *   lib/pluggy.ts
+ *     export class PluggyAccountsFetchError extends Error {}
+ *     export async function fetchPluggyAccounts(pluggyItemId: string): Promise<Array<{
+ *       pluggyAccountId: string;
+ *       name: string;
+ *       type: "BANK" | "CREDIT";
+ *       subtype: "CHECKING_ACCOUNT" | "SAVINGS_ACCOUNT" | "CREDIT_CARD";
+ *       balance: number;
+ *     }>>
+ *
+ *     export class PluggyTransactionsFetchError extends Error {}
+ *     export async function fetchPluggyAllTransactions(pluggyAccountId: string): Promise<Array<{
+ *       pluggyTransactionId: string;
+ *       date: Date;
+ *       description: string;
+ *       amount: number;
+ *       type: "DEBIT" | "CREDIT";
+ *       status: "PENDING" | "POSTED";
+ *       category: string | null;
+ *       paymentMethod: string | null;
+ *     }>>
+ *
+ * fetchPluggyAccounts deve:
+ *   - reutilizar a MESMA validacao de CLIENT_ID/CLIENT_SECRET das outras
+ *     funcoes - PluggyConfigError SEM instanciar PluggyClient;
+ *   - chamar `client.fetchAccounts(pluggyItemId)`
+ *     (node_modules/pluggy-sdk/dist/client.d.ts:71) e usar SOMENTE
+ *     `.results` (o payload real e `PageResponse<Account>` -
+ *     `{ results, page, total, totalPages }`);
+ *   - reconstruir CADA account campo a campo -
+ *     `{ pluggyAccountId: account.id, name: account.name, type: account.type,
+ *     subtype: account.subtype, balance: account.balance }` - NUNCA espalhar
+ *     (`...account`), para nunca deixar `taxNumber`/`owner`/`number`/
+ *     `marketingName`/`bankData`/`creditData` vazarem (Criterio de aceite #6
+ *     desta task, resolve o DT-017 no que diz respeito a `Account`);
+ *   - traduzir qualquer falha do SDK em PluggyAccountsFetchError, mensagem
+ *     fixa/generica, sem vazar detalhe do SDK;
+ *   - nunca chamar console.log/warn/error.
+ *
+ * fetchPluggyAllTransactions deve:
+ *   - reutilizar a MESMA validacao de CLIENT_ID/CLIENT_SECRET;
+ *   - chamar `client.fetchAllTransactions(pluggyAccountId)`
+ *     (node_modules/pluggy-sdk/dist/client.d.ts:106 - varredura COMPLETA
+ *     via cursor interno, devolve `Transaction[]` direto, sem paginacao
+ *     manual) - NUNCA `client.fetchTransactions` (deprecado, pagina por
+ *     pagina - DT-008);
+ *   - reconstruir CADA transacao campo a campo - `{ pluggyTransactionId: t.id,
+ *     date: t.date, description: t.description, amount: t.amount,
+ *     type: t.type, status: t.status ?? "POSTED", category: t.category,
+ *     paymentMethod: t.paymentData?.paymentMethod ?? null }` - NUNCA
+ *     espalhar (`...t`), para nunca deixar `paymentData.payer`/`.receiver`
+ *     (CPF/CNPJ, nomes, dados de conta - DT-017), `creditCardMetadata`,
+ *     `merchant`, `descriptionRaw`, `providerCode`/`providerId` vazarem
+ *     (Criterio de aceite #6/#7 desta task);
+ *   - traduzir qualquer falha do SDK em PluggyTransactionsFetchError, mesmo
+ *     padrao das demais;
+ *   - nunca chamar console.log/warn/error.
+ */
+
+const FAKE_PLUGGY_ACCOUNT_ID = "acc-3fa85f64-5717-4562-b3fc-2c963f66afa6";
+
+describe("fetchPluggyAccounts - sucesso (Criterio de aceite #1 da TASK-006)", () => {
+  it("busca as accounts do Item e retorna pluggyAccountId/name/type/subtype/balance", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const rawAccount = buildMockPluggyAccountResponse({
+      id: FAKE_PLUGGY_ACCOUNT_ID,
+      name: "Banco Teste Conta Corrente",
+      balance: 5230.11,
+    });
+    fetchAccountsMock.mockResolvedValueOnce({
+      results: [rawAccount],
+      page: 1,
+      total: 1,
+      totalPages: 1,
+    });
+
+    const { fetchPluggyAccounts } = await import("@/lib/pluggy");
+    const result = await fetchPluggyAccounts(FAKE_PLUGGY_ITEM_ID);
+
+    expect(result).toEqual([
+      {
+        pluggyAccountId: FAKE_PLUGGY_ACCOUNT_ID,
+        name: "Banco Teste Conta Corrente",
+        type: "BANK",
+        subtype: "CHECKING_ACCOUNT",
+        balance: 5230.11,
+      },
+    ]);
+  });
+
+  it("chama client.fetchAccounts com o pluggyItemId recebido, instanciando o PluggyClient com as credenciais do ambiente", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAccountsMock.mockResolvedValueOnce({
+      results: [],
+      page: 1,
+      total: 0,
+      totalPages: 0,
+    });
+
+    const { fetchPluggyAccounts } = await import("@/lib/pluggy");
+    await fetchPluggyAccounts(FAKE_PLUGGY_ITEM_ID);
+
+    expect(PluggyClientMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: FAKE_CLIENT_ID,
+        clientSecret: FAKE_CLIENT_SECRET,
+      }),
+    );
+    expect(fetchAccountsMock).toHaveBeenCalledTimes(1);
+    expect(fetchAccountsMock).toHaveBeenCalledWith(FAKE_PLUGGY_ITEM_ID);
+  });
+
+  it("retorna varias accounts na mesma chamada, uma corrente e uma cartao, cada uma com seu type/subtype/balance proprios", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const checking = buildMockPluggyAccountResponse({
+      id: "acc-checking-1",
+      name: "Conta Corrente",
+      balance: 5230.11,
+    });
+    const creditCard = buildMockPluggyCreditCardAccountResponse({
+      id: "acc-credit-1",
+      name: "Cartao",
+      balance: -820.45,
+    });
+    fetchAccountsMock.mockResolvedValueOnce({
+      results: [checking, creditCard],
+      page: 1,
+      total: 2,
+      totalPages: 1,
+    });
+
+    const { fetchPluggyAccounts } = await import("@/lib/pluggy");
+    const result = await fetchPluggyAccounts(FAKE_PLUGGY_ITEM_ID);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({
+      pluggyAccountId: "acc-checking-1",
+      type: "BANK",
+      subtype: "CHECKING_ACCOUNT",
+      balance: 5230.11,
+    });
+    expect(result[1]).toMatchObject({
+      pluggyAccountId: "acc-credit-1",
+      type: "CREDIT",
+      subtype: "CREDIT_CARD",
+      balance: -820.45,
+    });
+  });
+
+  it("NUNCA deixa taxNumber/owner/number/marketingName/bankData/creditData vazarem, mesmo vindo preenchidos no payload real (Criterio de aceite #6 - PII, DT-017)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const rawAccount = buildMockPluggyCreditCardAccountResponse({
+      id: FAKE_PLUGGY_ACCOUNT_ID,
+      taxNumber: FAKE_ACCOUNT_HOLDER_CPF,
+      owner: "Fulano de Tal",
+    });
+    fetchAccountsMock.mockResolvedValueOnce({
+      results: [rawAccount],
+      page: 1,
+      total: 1,
+      totalPages: 1,
+    });
+
+    const { fetchPluggyAccounts } = await import("@/lib/pluggy");
+    const result = await fetchPluggyAccounts(FAKE_PLUGGY_ITEM_ID);
+
+    expect(Object.keys(result[0]).sort()).toEqual(
+      ["balance", "name", "pluggyAccountId", "subtype", "type"].sort(),
+    );
+    const rawResult = JSON.stringify(result);
+    expect(rawResult).not.toContain(FAKE_ACCOUNT_HOLDER_CPF);
+    expect(rawResult).not.toContain("taxNumber");
+    expect(rawResult).not.toContain("Fulano de Tal");
+    expect(rawResult).not.toContain("bankData");
+    expect(rawResult).not.toContain("creditData");
+  });
+
+  it("nao chama console.log/warn/error no caminho feliz", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAccountsMock.mockResolvedValueOnce({
+      results: [buildMockPluggyAccountResponse()],
+      page: 1,
+      total: 1,
+      totalPages: 1,
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { fetchPluggyAccounts } = await import("@/lib/pluggy");
+    await fetchPluggyAccounts(FAKE_PLUGGY_ITEM_ID);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+describe("fetchPluggyAccounts - credenciais ausentes", () => {
+  it("rejeita com PluggyConfigError SEM instanciar PluggyClient nem chamar fetchAccounts", async () => {
+    delete process.env.CLIENT_ID;
+    delete process.env.CLIENT_SECRET;
+
+    const { fetchPluggyAccounts, PluggyConfigError } = await import(
+      "@/lib/pluggy"
+    );
+
+    await expect(
+      fetchPluggyAccounts(FAKE_PLUGGY_ITEM_ID),
+    ).rejects.toBeInstanceOf(PluggyConfigError);
+    expect(PluggyClientMock).not.toHaveBeenCalled();
+    expect(fetchAccountsMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchPluggyAccounts - falha da Pluggy", () => {
+  it("traduz uma falha do SDK em PluggyAccountsFetchError, sem vazar detalhe do SDK", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const sdkError = new Error(
+      "Timeout awaiting 'request' for 30000ms at connect ETIMEDOUT 200.1.2.3:443",
+    );
+    fetchAccountsMock.mockRejectedValueOnce(sdkError);
+
+    const { fetchPluggyAccounts, PluggyAccountsFetchError } = await import(
+      "@/lib/pluggy"
+    );
+
+    let caughtError: unknown;
+    try {
+      await fetchPluggyAccounts(FAKE_PLUGGY_ITEM_ID);
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(PluggyAccountsFetchError);
+    const message = (caughtError as Error).message;
+    expect(message.length).toBeGreaterThan(0);
+    expect(message).not.toContain("ETIMEDOUT");
+  });
+
+  it("traduz um objeto plano de erro HTTP (LOGIN_ERROR/OUTDATED do Item, ou 4xx/5xx) em PluggyAccountsFetchError", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAccountsMock.mockRejectedValueOnce({
+      message: "Item is not ready to fetch accounts",
+      code: 400,
+      codeDescription: "ITEM_NOT_READY",
+    });
+
+    const { fetchPluggyAccounts, PluggyAccountsFetchError } = await import(
+      "@/lib/pluggy"
+    );
+
+    await expect(
+      fetchPluggyAccounts(FAKE_PLUGGY_ITEM_ID),
+    ).rejects.toBeInstanceOf(PluggyAccountsFetchError);
+  });
+});
+
+describe("fetchPluggyAllTransactions - sucesso (Criterio de aceite #4 da TASK-006, resolve o DT-008)", () => {
+  it("chama client.fetchAllTransactions (NUNCA o fetchTransactions deprecado) com o pluggyAccountId recebido", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+
+    expect(PluggyClientMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: FAKE_CLIENT_ID,
+        clientSecret: FAKE_CLIENT_SECRET,
+      }),
+    );
+    expect(fetchAllTransactionsMock).toHaveBeenCalledTimes(1);
+    expect(fetchAllTransactionsMock).toHaveBeenCalledWith(
+      FAKE_PLUGGY_ACCOUNT_ID,
+    );
+    expect(fetchTransactionsMock).not.toHaveBeenCalled();
+  });
+
+  it("nao trunca um volume grande de transacoes (650, mais que a pagina de 500 da Pluggy) - fetchAllTransactions ja varre tudo (Criterio de aceite #4)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const manyTransactions = Array.from({ length: 650 }, (_, index) =>
+      buildRealCreditCardPurchaseTransaction({
+        id: `pluggy-tx-volume-${index}`,
+      }),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce(manyTransactions);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const result = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+
+    expect(result).toHaveLength(650);
+    expect(fetchTransactionsMock).not.toHaveBeenCalled();
+  });
+
+  it("mapeia type/status/category/amount corretamente e usa POSTED como default quando status vem ausente", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildRealCreditCardPurchaseTransaction({
+        id: "pluggy-tx-1",
+        status: undefined,
+      }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+
+    expect(result).toMatchObject({
+      pluggyTransactionId: "pluggy-tx-1",
+      type: "DEBIT",
+      amount: 138.83,
+      category: "Online shopping",
+      status: "POSTED",
+    });
+  });
+
+  it("preserva status PENDING quando presente (nao substitui pelo default)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildRealCreditCardPurchaseTransaction({
+        id: "pluggy-tx-pending",
+        status: "PENDING",
+      }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+
+    expect(result.status).toBe("PENDING");
+  });
+
+  it("extrai SOMENTE paymentData.paymentMethod e descarta payer/receiver/documentNumber/nomes/dados de conta (Criterio de aceite #6/#7, resolve o DT-017)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({ id: "pluggy-tx-pix" }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+
+    expect(Object.keys(result).sort()).toEqual(
+      [
+        "amount",
+        "category",
+        "date",
+        "description",
+        "paymentMethod",
+        "pluggyTransactionId",
+        "status",
+        "type",
+      ].sort(),
+    );
+    expect(result.paymentMethod).toBe("PIX");
+
+    const rawResult = JSON.stringify(result);
+    expect(rawResult).not.toContain(FAKE_PAYER_CPF);
+    expect(rawResult).not.toContain(FAKE_RECEIVER_CNPJ);
+    expect(rawResult).not.toContain("Fulano de Tal Pagador");
+    expect(rawResult).not.toContain("Loja Teste Recebedora");
+    expect(rawResult).not.toContain("documentNumber");
+    expect(rawResult).not.toContain("payer");
+    expect(rawResult).not.toContain("receiver");
+    expect(rawResult).not.toContain("accountNumber");
+    expect(rawResult).not.toContain("branchNumber");
+    expect(rawResult).not.toContain("routingNumber");
+  });
+
+  it("paymentMethod fica null quando a transacao nao tem paymentData (ex.: compra de cartao)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildRealCreditCardPurchaseTransaction({
+        id: "pluggy-tx-sem-payment-data",
+        paymentData: undefined,
+      }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+
+    expect(result.paymentMethod).toBeNull();
+  });
+
+  it("NUNCA deixa creditCardMetadata (cardNumber)/merchant vazarem, mesmo vindo preenchidos no payload real", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildRealCreditCardPurchaseTransaction({
+        id: "pluggy-tx-cc-metadata",
+        merchant: {
+          name: "Loja Teste",
+          businessName: "Loja Teste LTDA",
+          cnpj: FAKE_RECEIVER_CNPJ,
+        },
+      }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+
+    const rawResult = JSON.stringify(result);
+    expect(rawResult).not.toContain("cardNumber");
+    expect(rawResult).not.toContain("1234");
+    expect(rawResult).not.toContain("merchant");
+    expect(rawResult).not.toContain(FAKE_RECEIVER_CNPJ);
+  });
+
+  it("nao chama console.log/warn/error no caminho feliz", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([]);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+describe("fetchPluggyAllTransactions - credenciais ausentes", () => {
+  it("rejeita com PluggyConfigError SEM instanciar PluggyClient nem chamar fetchAllTransactions", async () => {
+    delete process.env.CLIENT_ID;
+    delete process.env.CLIENT_SECRET;
+
+    const { fetchPluggyAllTransactions, PluggyConfigError } = await import(
+      "@/lib/pluggy"
+    );
+
+    await expect(
+      fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID),
+    ).rejects.toBeInstanceOf(PluggyConfigError);
+    expect(PluggyClientMock).not.toHaveBeenCalled();
+    expect(fetchAllTransactionsMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchPluggyAllTransactions - falha da Pluggy (API fora do ar, Item LOGIN_ERROR/OUTDATED)", () => {
+  it("traduz uma falha de rede/timeout em PluggyTransactionsFetchError, sem vazar mensagem/stack originais", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const sdkError = new Error("connect ECONNREFUSED 200.1.2.3:443");
+    sdkError.stack =
+      "Error: connect ECONNREFUSED\n    at Object.<anonymous> (/app/node_modules/pluggy-sdk/dist/baseApi.js:99:20)";
+    fetchAllTransactionsMock.mockRejectedValueOnce(sdkError);
+
+    const { fetchPluggyAllTransactions, PluggyTransactionsFetchError } =
+      await import("@/lib/pluggy");
+
+    let caughtError: unknown;
+    try {
+      await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(PluggyTransactionsFetchError);
+    const message = (caughtError as Error).message;
+    expect(message).not.toContain("ECONNREFUSED");
+    expect(message).not.toContain(".ts:");
+    expect(message).not.toContain(".js:");
+  });
+
+  it("traduz uma rejeicao representando um Item LOGIN_ERROR/OUTDATED (nao consegue buscar transacoes) em PluggyTransactionsFetchError", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockRejectedValueOnce({
+      message: "Item credentials are outdated",
+      code: 400,
+      codeDescription: "ITEM_LOGIN_ERROR",
+    });
+
+    const { fetchPluggyAllTransactions, PluggyTransactionsFetchError } =
+      await import("@/lib/pluggy");
+
+    await expect(
+      fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID),
+    ).rejects.toBeInstanceOf(PluggyTransactionsFetchError);
+  });
+
+  it("nao chama console.log/warn/error mesmo quando a Pluggy falha de verdade", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockRejectedValueOnce(new Error("boom"));
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID).catch(
+      () => undefined,
+    );
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();

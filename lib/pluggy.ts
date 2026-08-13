@@ -225,3 +225,154 @@ function isItemNotFoundError(error: unknown): boolean {
 
   return codeDescription === "ITEM_NOT_FOUND" || code === NOT_FOUND_STATUS_CODE;
 }
+
+/**
+ * Erro de dominio: falha ao buscar as Accounts de um Item na Pluggy
+ * (`client.fetchAccounts`). Mensagem fixa e generica, mesmo padrao dos
+ * demais erros deste modulo - o texto de erro do fornecedor nao e confiavel
+ * para expor ao usuario.
+ */
+export class PluggyAccountsFetchError extends Error {
+  constructor() {
+    super(
+      "Nao foi possivel obter as contas deste banco. Tente novamente em instantes.",
+    );
+    this.name = "PluggyAccountsFetchError";
+  }
+}
+
+/** Formato cru (ja traduzido, sem PII) de uma Account devolvida pela Pluggy. */
+export type PluggyRawAccount = {
+  pluggyAccountId: string;
+  name: string;
+  type: "BANK" | "CREDIT";
+  subtype: "CHECKING_ACCOUNT" | "SAVINGS_ACCOUNT" | "CREDIT_CARD";
+  balance: number;
+};
+
+/**
+ * Busca as Accounts de um Item na Pluggy (TASK-006 - sync de Accounts e
+ * Transactions). Resolve parte do DT-017: `account.taxNumber`/`owner`/
+ * `number`/`marketingName`/`bankData`/`creditData` NUNCA sao repassados.
+ *
+ * - Reutiliza a MESMA validacao de `CLIENT_ID`/`CLIENT_SECRET` das demais
+ *   funcoes deste modulo - rejeita com `PluggyConfigError` SEM instanciar
+ *   `PluggyClient` quando as credenciais estao ausentes/vazias.
+ * - Quando configurado: `client.fetchAccounts(pluggyItemId)`
+ *   (node_modules/pluggy-sdk/dist/client.d.ts:71), que devolve
+ *   `PageResponse<Account>` (`{ results, page, total, totalPages }`) - usa
+ *   SOMENTE `.results`.
+ * - Reconstroi CADA account campo a campo (nunca espalha `...account`), para
+ *   nunca deixar `taxNumber`/`owner`/`number`/`marketingName`/`bankData`/
+ *   `creditData` vazarem, mesmo que a Pluggy adicione campos novos no
+ *   futuro (defesa em profundidade, mesmo padrao de `fetchPluggyItem`).
+ * - Qualquer falha do SDK vira `PluggyAccountsFetchError`, mensagem
+ *   fixa/generica, sem stack/detalhe do SDK.
+ * - Nenhum `console.*` em nenhum caminho.
+ */
+export async function fetchPluggyAccounts(
+  pluggyItemId: string,
+): Promise<PluggyRawAccount[]> {
+  const clientId = process.env.CLIENT_ID;
+  const clientSecret = process.env.CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new PluggyConfigError();
+  }
+
+  try {
+    const client = new PluggyClient({ clientId, clientSecret });
+    const page = await client.fetchAccounts(pluggyItemId);
+    return page.results.map((account) => ({
+      pluggyAccountId: account.id,
+      name: account.name,
+      type: account.type,
+      subtype: account.subtype,
+      balance: account.balance,
+    }));
+  } catch {
+    throw new PluggyAccountsFetchError();
+  }
+}
+
+/**
+ * Erro de dominio: falha ao buscar as Transactions de uma Account na Pluggy
+ * (`client.fetchAllTransactions`). Mensagem fixa e generica, mesmo padrao
+ * dos demais erros deste modulo.
+ */
+export class PluggyTransactionsFetchError extends Error {
+  constructor() {
+    super(
+      "Nao foi possivel obter as transacoes desta conta. Tente novamente em instantes.",
+    );
+    this.name = "PluggyTransactionsFetchError";
+  }
+}
+
+/**
+ * Formato cru (ja traduzido, sem PII) de uma Transaction devolvida pela
+ * Pluggy. `amount` continua CRU - a normalizacao de sinal por tipo de conta
+ * (DT-007) e responsabilidade de `lib/sync.ts`, nao deste modulo.
+ */
+export type PluggyRawTransaction = {
+  pluggyTransactionId: string;
+  date: Date;
+  description: string;
+  amount: number;
+  type: "DEBIT" | "CREDIT";
+  status: "PENDING" | "POSTED";
+  category: string | null;
+  paymentMethod: string | null;
+};
+
+const DEFAULT_TRANSACTION_STATUS = "POSTED";
+
+/**
+ * Busca TODAS as Transactions de uma Account na Pluggy (TASK-006). Resolve o
+ * DT-008 (paginacao): usa `client.fetchAllTransactions`, que varre o cursor
+ * internamente e ja devolve o array completo - NUNCA
+ * `client.fetchTransactions` (deprecado, pagina por pagina, trunca em
+ * silencio se usado sem paginar manualmente). Resolve parte do DT-017:
+ * `paymentData.payer`/`.receiver` (CPF/CNPJ, nomes, dados de conta),
+ * `creditCardMetadata`, `merchant`, `descriptionRaw`, `providerCode`/
+ * `providerId` NUNCA sao repassados - so `paymentData.paymentMethod`
+ * sobrevive, mapeado para `paymentMethod`.
+ *
+ * - Reutiliza a MESMA validacao de `CLIENT_ID`/`CLIENT_SECRET`.
+ * - Quando configurado: `client.fetchAllTransactions(pluggyAccountId)`
+ *   (node_modules/pluggy-sdk/dist/client.d.ts:106).
+ * - Reconstroi CADA transacao campo a campo (nunca espalha `...t`).
+ *   `status` usa `t.status ?? "POSTED"` como default quando a Pluggy nao
+ *   devolve o campo (a propria SDK documenta esse default - ver
+ *   node_modules/pluggy-sdk/dist/types/transaction.d.ts).
+ * - Qualquer falha do SDK vira `PluggyTransactionsFetchError`, mesmo padrao
+ *   das demais.
+ * - Nenhum `console.*` em nenhum caminho.
+ */
+export async function fetchPluggyAllTransactions(
+  pluggyAccountId: string,
+): Promise<PluggyRawTransaction[]> {
+  const clientId = process.env.CLIENT_ID;
+  const clientSecret = process.env.CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new PluggyConfigError();
+  }
+
+  try {
+    const client = new PluggyClient({ clientId, clientSecret });
+    const transactions = await client.fetchAllTransactions(pluggyAccountId);
+    return transactions.map((t) => ({
+      pluggyTransactionId: t.id,
+      date: t.date,
+      description: t.description,
+      amount: t.amount,
+      type: t.type,
+      status: t.status ?? DEFAULT_TRANSACTION_STATUS,
+      category: t.category,
+      paymentMethod: t.paymentData?.paymentMethod ?? null,
+    }));
+  } catch {
+    throw new PluggyTransactionsFetchError();
+  }
+}

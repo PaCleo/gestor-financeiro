@@ -24,6 +24,18 @@
 // dos BankItems nunca sera arquivada) e tambem porque a tabela ja pode ter
 // linhas quando a migration roda - `NOT NULL` sem default quebraria contra
 // dado preexistente (mesma licao do DT-013).
+//
+// TASK-006 (sync de Accounts/Transactions, resolve DT-007/DT-008/DT-017):
+// - Account ganha `balance Decimal? @db.Decimal(14, 2)` - NULLABLE (nao
+//   `NOT NULL`/default): DT-013 (Account ja existe desde a TASK-001 e pode
+//   ter linhas) + correto por natureza (uma Account manual, sem
+//   pluggyAccountId, pode nunca ter saldo vindo da Pluggy).
+// - Transaction ganha `status String @default("POSTED")` - NOT NULL com
+//   default (DT-013 satisfeito pelo default, sem abrir mao de NOT NULL:
+//   toda Transaction, real ou manual, tem status definido).
+// - Nenhum campo de PII de `paymentData` (documentNumber/payer/receiver/
+//   nomes/dados de conta de terceiros) e persistido - so
+//   `Transaction.method` (ja existente) recebe `paymentData.paymentMethod`.
 
 generator client {
   provider = "prisma-client-js"
@@ -51,6 +63,7 @@ model Account {
   bankItem        BankItem? @relation(fields: [bankItemId], references: [id], onDelete: Cascade)
   name            String
   type            String
+  balance         Decimal? @db.Decimal(14, 2)
   transactions    Transaction[]
 }
 
@@ -66,6 +79,7 @@ model Transaction {
   categoryOverride     String?
   source               String
   method                String?
+  status               String    @default("POSTED")
   recurringBillId      String?
   recurringBill        RecurringBill? @relation(fields: [recurringBillId], references: [id])
   billInstance         RecurringBillInstance?
