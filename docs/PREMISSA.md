@@ -267,6 +267,43 @@ Estas restrições **moldam o desenho do sync** — não são detalhe de infraes
 > Esta seção existe porque **o formato da Pluggy não é o nosso formato**. Importar cru produz
 > dados errados. Cada linha aqui é uma tradução obrigatória no sync.
 
+### ✅ Confirmação contra DADOS REAIS (sondagem em 2026-07-25, Item conectado de verdade)
+
+Sondei a API com um Item real (3 contas: 1 corrente + 2 cartões, 432 transações) e imprimi os
+formatos mascarando valores sensíveis. O que a sondagem confirmou e o que **corrigiu**:
+
+1. **DT-007 CONFIRMADO, e pior do que só "sinal invertido":**
+   - Conta **corrente**, transação de saída: `type=DEBIT`, `amount=-1806.01` (negativo). Bate com nosso modelo.
+   - **Cartão**, uma compra: `type=DEBIT`, `amount=+138.83` (**positivo**), `category="Online shopping"`.
+   - Ou seja: o `type` é `DEBIT` nos dois casos, mas o **sinal depende do tipo da conta** — não dá
+     para normalizar olhando só `type`. A regra do sync é: para conta `CREDIT`, inverter o sinal
+     (compra positiva vira saída negativa no nosso modelo); para `BANK`, o sinal já está correto.
+     Sem isso, os R$138,83 daquela compra entram como **receita**.
+
+2. **`category` VEM PREENCHIDO — contradiz o DT-010.** Os dados reais trazem `category="Housing"`,
+   `"Online shopping"`, com `categoryId` ("17000000", "08010000"). A premissa assumia `null` sem
+   Pro. **Precisa ser reverificado** (ver DT-010 atualizado) — pode ser o conector, o plano, ou o
+   ambiente. Não confiar em nenhuma das duas hipóteses até confirmar de onde vem.
+
+3. **PII nova, dentro da transação:** `transaction.paymentData.payer.documentNumber` e
+   `.receiver.documentNumber` trazem **CPF e CNPJ reais** (`{ type: "CPF", value: "..." }`), além de
+   nomes e dados de conta. Não é só `account.taxNumber` — o CPF está espalhado no `paymentData`.
+   O sync (Fase 2) precisa decidir explicitamente o que de `paymentData` persistir; repo é público.
+
+4. **Endpoint de transação antigo está DEPRECADO.** `fetchTransactions` (paginação por página) devolve
+   aviso de deprecação apontando para `GET /v2/transactions` com cursor. O SDK expõe
+   `fetchTransactionsCursor` (uma página) e **`fetchAllTransactions`** (varredura completa, cursor
+   interno). O sync deve usar `fetchAllTransactions` — resolve o DT-008 de graça. `pageSize` não é
+   aceito no endpoint de cursor (400).
+
+5. **Transações `PENDING` existem** (uma compra de cartão veio `status="PENDING"`). Decidir no sync
+   se importamos PENDING — elas mudam/somem quando a fatura fecha.
+
+6. **`creditData` é mais rico que a doc** e tem a base da fatura: `balanceDueDate` ("2026-08-10"),
+   `minimumPayment`, `creditLimit`, `availableCreditLimit`, `disaggregatedCreditLimits[]`,
+   `additionalCards[]`. `creditCardMetadata` na transação traz `cardNumber` (últimos 4),
+   `payeeMCC`, `billForecastDate` ("2026-08") — o vínculo transação→fatura.
+
 ### ⚠️ O sinal do `amount` é invertido no cartão de crédito
 
 A documentação de Transaction diz, literalmente: *"positive for credit card expenses, negative
