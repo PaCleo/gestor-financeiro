@@ -215,6 +215,30 @@ describe("BankItem -> Account cascade delete", () => {
   });
 });
 
+describe("BankItem.archivedAt - coluna nullable no Postgres real (Criterio 1 da TASK-005, DT-013)", () => {
+  it("a coluna archivedAt existe, e nullable e do tipo timestamp", async () => {
+    const columns = await prisma.$queryRaw<
+      { column_name: string; is_nullable: string; data_type: string }[]
+    >`
+      SELECT column_name, is_nullable, data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'BankItem'
+        AND column_name = 'archivedAt'
+    `;
+
+    expect(columns).toHaveLength(1);
+    expect(columns[0].is_nullable).toBe("YES");
+    expect(columns[0].data_type).toMatch(/timestamp/i);
+  });
+
+  it("um BankItem criado sem archivedAt persiste com o valor NULL (nao quebra insercao existente)", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+
+    expect(bankItem.archivedAt).toBeNull();
+  });
+});
+
 describe("Edge cases de integridade", () => {
   it("rejeita Transaction com accountId inexistente (integridade referencial)", async () => {
     let caughtError: unknown;

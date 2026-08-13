@@ -314,6 +314,24 @@ Três garantias verificadas sobre as 615 combinações possíveis (incluindo val
    `PARTIAL_SUCCESS`, o estado é `PRECISA_ACAO`, não `PARCIAL` — o que o usuário precisa fazer é
    mais acionável do que o que faltou coletar. Resolver a ação tende a resolver o parcial junto.
 
+### Formato de erro do SDK (descoberto sondando a API real na TASK-005)
+
+O `pluggy-sdk` **não** rejeita com um objeto que tenha `statusCode` no topo, nem com um `Error`
+padrão. Ele rejeita com o **corpo de erro cru da Pluggy** — um objeto plano:
+
+```
+{ message: 'item not found', code: 404, codeDescription: 'ITEM_NOT_FOUND', errorId: '<uuid>' }
+```
+
+Consequências para quem for tratar erro do SDK (Fase 2 em diante):
+- O discriminador confiável é **`codeDescription`** (semântico, ex. `ITEM_NOT_FOUND`), com `code`
+  (numérico HTTP) como reforço. **Nunca** `statusCode` nem `error.response`.
+- Um mock de teste que fabrica `{ statusCode: 404 }` passa mas **não reflete a realidade** — foi
+  o bug do critério 4 da TASK-005, pego só ao chamar a API de verdade. Mocks de erro do SDK devem
+  usar o shape acima.
+- Ver DT-006: o SDK também expõe dados no erro; nossa camada `lib/` traduz para erro de domínio
+  com mensagem fixa, sem repassar o objeto cru.
+
 ### Outras restrições técnicas
 
 - **Paginação por cursor:** transações vêm em páginas de 500, com um cursor `next`. Um sync que
