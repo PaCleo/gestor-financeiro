@@ -33,7 +33,7 @@
 | Task | Título | Status |
 |---|---|---|
 | [TASK-006](./tasks/TASK-006.md) | Sync de Accounts e Transactions (`POST /api/sync`) | CONCLUÍDA |
-| — | Tela de transações com filtros (fecha a Fase 2) | PENDENTE |
+| [TASK-007](./tasks/TASK-007.md) | Tela de transações com filtros (fecha a Fase 2) | EM ANDAMENTO |
 
 ## Fase 3 — Lançamentos manuais
 **Critério de pronto:** insiro um Pix manual e ele aparece junto com o resto.
