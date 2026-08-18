@@ -8,7 +8,7 @@ import {
   vi,
 } from "vitest";
 import { prisma } from "@/lib/db";
-import { resetDatabase } from "../setup/reset-db";
+import { resetDatabase, resetCategoryRuleTable } from "../setup/reset-db";
 import { buildBankItem } from "../fixtures/db";
 import {
   FAKE_ACCOUNT_HOLDER_CPF,
@@ -615,5 +615,302 @@ describe("syncBankItem - API da Pluggy fora do ar / Item LOGIN_ERROR-OUTDATED (c
       where: { id: bankItem.id },
     });
     expect(reloaded.lastSyncAt).toBeNull();
+  });
+});
+
+/**
+ * TASK-008 (DT-019) - regras de categorizacao por CPF/CNPJ. `resetCategoryRuleTable`
+ * (nao `resetDatabase`, que NAO inclui a tabela nova - ver o comentario em
+ * tests/setup/reset-db.ts) limpa `CategoryRule` entre os `it`s deste bloco,
+ * escopado localmente para nao quebrar os describes acima (TASK-006/007)
+ * antes da migration desta task existir.
+ */
+describe("syncBankItem - regra de categorizacao por CPF/CNPJ (Criterio de aceite #6, DT-019, contra o Postgres real)", () => {
+  afterEach(async () => {
+    await resetCategoryRuleTable(prisma);
+  });
+
+  it("transacao cuja contraparte (receiver) casa com uma CategoryRule ja cadastrada recebe categoryFromRule = categoria da regra", async () => {
+    const { hashDocument } = await import("@/lib/category-rules");
+    await prisma.categoryRule.create({
+      data: {
+        documentHash: hashDocument(FAKE_RECEIVER_CNPJ),
+        category: "Mercado",
+        label: "Mercado do bairro",
+      },
+    });
+
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyAccountResponse({ id: "acc-regra-receiver" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({ id: "tx-regra-receiver" }),
+    ]);
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const transaction = await prisma.transaction.findUniqueOrThrow({
+      where: { pluggyTransactionId: "tx-regra-receiver" },
+    });
+    expect(transaction.categoryFromRule).toBe("Mercado");
+  });
+
+  it("transacao cuja contraparte (payer) casa com uma CategoryRule ja cadastrada recebe categoryFromRule = categoria da regra", async () => {
+    const { hashDocument } = await import("@/lib/category-rules");
+    await prisma.categoryRule.create({
+      data: {
+        documentHash: hashDocument(FAKE_PAYER_CPF),
+        category: "Recebimento de pessoa física",
+      },
+    });
+
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyAccountResponse({ id: "acc-regra-payer" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({ id: "tx-regra-payer" }),
+    ]);
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const transaction = await prisma.transaction.findUniqueOrThrow({
+      where: { pluggyTransactionId: "tx-regra-payer" },
+    });
+    expect(transaction.categoryFromRule).toBe("Recebimento de pessoa física");
+  });
+
+  it("transacao sem contraparte que case com nenhuma regra recebe categoryFromRule = null (mesmo com outras regras cadastradas)", async () => {
+    const { hashDocument } = await import("@/lib/category-rules");
+    await prisma.categoryRule.create({
+      data: {
+        documentHash: hashDocument("00000000000"),
+        category: "Categoria de outra regra qualquer",
+      },
+    });
+
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyAccountResponse({ id: "acc-sem-regra" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({ id: "tx-sem-regra-correspondente" }),
+    ]);
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const transaction = await prisma.transaction.findUniqueOrThrow({
+      where: { pluggyTransactionId: "tx-sem-regra-correspondente" },
+    });
+    expect(transaction.categoryFromRule).toBeNull();
+  });
+
+  it("transacao SEM paymentData (compra de cartao) recebe categoryFromRule = null, sem lancar", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardAccountResponse({ id: "acc-sem-payment-data" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildRealCreditCardPurchaseTransaction({ id: "tx-cartao-sem-regra" }),
+    ]);
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const transaction = await prisma.transaction.findUniqueOrThrow({
+      where: { pluggyTransactionId: "tx-cartao-sem-regra" },
+    });
+    expect(transaction.categoryFromRule).toBeNull();
+  });
+
+  it("uma regra criada DEPOIS de um sync inicial passa a valer no RE-sync (consequencia aceita do DT-019 - nao retroativa isolada)", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyAccountResponse({ id: "acc-regra-tardia" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({ id: "tx-regra-tardia" }),
+    ]);
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const beforeRule = await prisma.transaction.findUniqueOrThrow({
+      where: { pluggyTransactionId: "tx-regra-tardia" },
+    });
+    expect(beforeRule.categoryFromRule).toBeNull();
+
+    // A regra so e criada AGORA, depois do primeiro sync.
+    const { hashDocument } = await import("@/lib/category-rules");
+    await prisma.categoryRule.create({
+      data: {
+        documentHash: hashDocument(FAKE_RECEIVER_CNPJ),
+        category: "Mercado",
+      },
+    });
+
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyAccountResponse({ id: "acc-regra-tardia" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({ id: "tx-regra-tardia" }),
+    ]);
+    await syncBankItem(bankItem.id);
+
+    const afterRule = await prisma.transaction.findUniqueOrThrow({
+      where: { pluggyTransactionId: "tx-regra-tardia" },
+    });
+    expect(afterRule.categoryFromRule).toBe("Mercado");
+    // Ainda a MESMA linha (upsert, nao duplicou).
+    expect(afterRule.id).toBe(beforeRule.id);
+  });
+});
+
+/**
+ * TASK-008 (DT-019) - O TESTE MAIS CRITICO DA TASK (Criterio de aceite #7).
+ * Monta um `paymentData` com CPF e CNPJ fabricados que REALMENTE aparecem no
+ * payload de entrada do sync (mesma tecnica de
+ * "syncBankItem - PII" acima, DT-011/DT-017), sincroniza de verdade contra o
+ * Postgres real, e prova por VALOR que:
+ *   1. o documento que vem em `paymentData` (payer/receiver) NUNCA aparece
+ *      em NENHUMA coluna de NENHUMA linha de Transaction (varredura de
+ *      TODAS as linhas, nao so a que acabou de ser criada);
+ *   2. `counterpartyDocumentHashes` (calculado por `fetchPluggyAllTransactions`)
+ *      e composto de HASHES SHA-256 (64 hex chars), nao dos documentos -
+ *      comparados com o hash CONHECIDO calculado por `hashDocument` (a MESMA
+ *      funcao usada no cadastro de regras).
+ *
+ * ESCOPO HONESTO deste teste (correcao pos-aprovacao, 2026-08-18, achado do
+ * coordenador apos sondagem real): a garantia provada aqui e ESPECIFICA do
+ * VETOR `paymentData` - NAO "CPF/CNPJ nunca aparece em nenhuma coluna de
+ * Transaction em qualquer circunstancia". Essa segunda afirmacao seria
+ * FALSA: o DT-021 (descoberto na sondagem real desta mesma task) documenta
+ * que a Pluggy embute CPF cru (em digitos) no texto livre de
+ * `transaction.description` para algumas transacoes reais (ex. PIX
+ * recebido, "RECEBIMENTO ... 00000000000 ... FULANO"), e a TASK-006 ja
+ * persiste `description` como vem, sem scrub - isso e vetor PRE-EXISTENTE e
+ * ORTOGONAL a esta task, fora de escopo resolver aqui. A fixture usada
+ * abaixo (`buildTransactionWithPaymentData`) tem `description: "Pix
+ * enviado"` - NUNCA contem o CPF/CNPJ fabricado - entao a asserção de
+ * "nenhuma coluna contem o documento" e verdadeira PARA ESTE PAYLOAD (o
+ * documento so existiria em `description` se a Pluggy o tivesse colocado
+ * la, o que este teste nao simula). O que este teste prova de fato, com
+ * poder de deteccao real: o documento presente em `payer`/`receiver` -
+ * ONDE o DT-017/DT-019 promete que ele nunca sobrevive - de fato nao
+ * sobrevive a lugar nenhum. Scrub de `description` (se decidido) e uma
+ * task propria (ver DT-021 em docs/DEBITO-TECNICO.md).
+ */
+describe("syncBankItem - TESTE DE PII CRITICO: o documento de paymentData jamais persistido em nenhuma coluna de Transaction (Criterio de aceite #7, DT-019 - vetor paymentData; o vetor description e o DT-021, fora de escopo desta task)", () => {
+  afterEach(async () => {
+    await resetCategoryRuleTable(prisma);
+  });
+
+  it("apos o sync, nenhum CPF/CNPJ fabricado vindo de paymentData (REALMENTE presente no payload de entrada, e ausente da description da fixture) aparece em NENHUMA linha/coluna de Transaction - varredura completa da tabela (DT-021: description e vetor separado, fora de escopo)", async () => {
+    const { hashDocument } = await import("@/lib/category-rules");
+    // Regra cadastrada para o CNPJ do recebedor, para provar que MESMO
+    // quando a regra casa (e a categoria e persistida), o documento em si
+    // continua fora da tabela.
+    await prisma.categoryRule.create({
+      data: {
+        documentHash: hashDocument(FAKE_RECEIVER_CNPJ),
+        category: "Mercado",
+      },
+    });
+
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyAccountResponse({ id: "acc-pii-critico" })]),
+    );
+    const rawTransaction = buildTransactionWithPaymentData({
+      id: "tx-pii-critico",
+    });
+    // Confirma que o payload de ENTRADA REALMENTE contem os documentos
+    // fabricados - senao a asserção de nao-vazamento abaixo passaria por
+    // ausencia de mecanismo, nao por protecao (DT-011).
+    expect(JSON.stringify(rawTransaction)).toContain(FAKE_PAYER_CPF);
+    expect(JSON.stringify(rawTransaction)).toContain(FAKE_RECEIVER_CNPJ);
+    // Confirma tambem o INVERSO, para a asserção final ser honesta (DT-021):
+    // a `description` desta fixture (`buildMockPluggyTransactionResponse`
+    // -> "Pix enviado") NAO contem os documentos fabricados. Ou seja, a
+    // varredura abaixo prova que o documento de `paymentData` nunca
+    // sobrevive a coluna nenhuma - ela NAO prova (nem tenta provar) que
+    // `description` seria igualmente limpa se a Pluggy tivesse colocado um
+    // CPF ali (caso real, documentado no DT-021, fora de escopo desta
+    // task).
+    expect(rawTransaction.description).not.toContain(FAKE_PAYER_CPF);
+    expect(rawTransaction.description).not.toContain(FAKE_RECEIVER_CNPJ);
+    fetchAllTransactionsMock.mockResolvedValueOnce([rawTransaction]);
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    // Varredura de TODAS as linhas/colunas da tabela Transaction - nao so a
+    // que acabou de ser criada (defesa contra um bug que gravasse o
+    // documento em outra linha/coluna por engano). Honesto sobre o escopo
+    // (DT-021, ver o comentario do describe acima): esta varredura prova a
+    // ausencia do documento de `paymentData` em QUALQUER coluna, incluindo
+    // `description` - mas so porque a `description` desta fixture nunca
+    // continha o documento em primeiro lugar (confirmado acima). Isto NAO e
+    // uma prova de que `description` estaria sempre limpa de CPF/CNPJ em
+    // producao - o DT-021 documenta o caso real onde nao esta.
+    const allTransactions = await prisma.transaction.findMany();
+    const rawAllTransactions = JSON.stringify(allTransactions);
+    expect(rawAllTransactions).not.toContain(FAKE_PAYER_CPF);
+    expect(rawAllTransactions).not.toContain(FAKE_RECEIVER_CNPJ);
+    expect(rawAllTransactions).not.toContain("12345678900");
+    expect(rawAllTransactions).not.toContain("12345678000195");
+    expect(rawAllTransactions).not.toContain("Fulano de Tal Pagador");
+    expect(rawAllTransactions).not.toContain("Loja Teste Recebedora");
+
+    // A categoria da regra FOI aplicada (prova que o casamento funcionou -
+    // nao e so ausencia de dado por a regra nunca ter casado).
+    const persisted = await prisma.transaction.findUniqueOrThrow({
+      where: { pluggyTransactionId: "tx-pii-critico" },
+    });
+    expect(persisted.categoryFromRule).toBe("Mercado");
+  });
+
+  it("a mesma varredura tambem cobre a tabela CategoryRule inteira - so o hash sobrevive, nunca o documento", async () => {
+    const { upsertCategoryRule } = await import("@/lib/category-rules");
+    await upsertCategoryRule({
+      document: FAKE_RECEIVER_CNPJ,
+      category: "Mercado",
+      label: "Mercado do bairro",
+    });
+
+    const allRules = await prisma.categoryRule.findMany();
+    const rawAllRules = JSON.stringify(allRules);
+    expect(rawAllRules).not.toContain(FAKE_RECEIVER_CNPJ);
+    expect(rawAllRules).not.toContain("12345678000195");
+    // O hash, por outro lado, DEVE estar la (documentHash e o unico traco
+    // permitido do documento).
+    expect(allRules).toHaveLength(1);
+    expect(allRules[0].documentHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("counterpartyDocumentHashes (calculado dentro de fetchPluggyAllTransactions, ANTES de qualquer persistencia) e composto de HASHES SHA-256, nao dos documentos - comparado com hashDocument (a MESMA fonte usada no cadastro)", async () => {
+    const { hashDocument } = await import("@/lib/category-rules");
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({ id: "tx-hash-shape-direct" }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [rawResult] = await fetchPluggyAllTransactions("acc-hash-shape");
+
+    expect(rawResult.counterpartyDocumentHashes).toEqual(
+      expect.arrayContaining([
+        hashDocument(FAKE_PAYER_CPF),
+        hashDocument(FAKE_RECEIVER_CNPJ),
+      ]),
+    );
+    for (const hash of rawResult.counterpartyDocumentHashes) {
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(hash).not.toContain(FAKE_PAYER_CPF.replace(/\D/g, ""));
+      expect(hash).not.toContain(FAKE_RECEIVER_CNPJ.replace(/\D/g, ""));
+    }
   });
 });

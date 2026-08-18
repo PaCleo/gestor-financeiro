@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { listActiveBankItems } from "@/lib/bank-item";
 import { fetchPluggyAccounts, fetchPluggyAllTransactions } from "@/lib/pluggy";
+import { getCategoryRuleHashMap } from "@/lib/category-rules";
 
 /**
  * Sync de Accounts e Transactions (TASK-006, primeira task da Fase 2).
@@ -111,6 +112,14 @@ const PLUGGY_SOURCE = "PLUGGY";
  *       (DT-017 resolvido em `lib/pluggy.ts` - aqui so repassamos).
  * 5. So DEPOIS de tudo sincronizado, atualiza `BankItem.lastSyncAt`.
  * 6. Devolve `{ bankItemId, accountsSynced, transactionsSynced }`.
+ *
+ * TASK-008 (DT-019): antes do loop de accounts, busca o mapa hash->categoria
+ * (`getCategoryRuleHashMap`, `@/lib/category-rules`) UMA UNICA VEZ (nao a
+ * cada transacao/account). Para cada transacao, resolve `categoryFromRule`
+ * procurando cada hash de `rawTransaction.counterpartyDocumentHashes` no
+ * mapa - o primeiro que casar vence; `null` se nenhum casar. Re-aplicado a
+ * CADA sync (create E update do upsert), nunca grava o hash/documento em
+ * `Transaction`.
  */
 export async function syncBankItem(bankItemId: string): Promise<{
   bankItemId: string;
@@ -130,6 +139,7 @@ export async function syncBankItem(bankItemId: string): Promise<{
   }
 
   const rawAccounts = await fetchPluggyAccounts(bankItem.pluggyItemId);
+  const categoryRuleMap = await getCategoryRuleHashMap();
 
   let accountsSynced = 0;
   let transactionsSynced = 0;
@@ -163,6 +173,11 @@ export async function syncBankItem(bankItemId: string): Promise<{
         rawAccount.type,
         rawTransaction.amount,
       );
+      const categoryFromRule =
+        rawTransaction.counterpartyDocumentHashes
+          .map((hash) => categoryRuleMap.get(hash))
+          .find((category): category is string => category !== undefined) ??
+        null;
 
       await prisma.transaction.upsert({
         where: { pluggyTransactionId: rawTransaction.pluggyTransactionId },
@@ -173,6 +188,7 @@ export async function syncBankItem(bankItemId: string): Promise<{
           description: rawTransaction.description,
           amount,
           category: rawTransaction.category,
+          categoryFromRule,
           method: rawTransaction.paymentMethod,
           status: rawTransaction.status,
           source: PLUGGY_SOURCE,
@@ -182,6 +198,7 @@ export async function syncBankItem(bankItemId: string): Promise<{
           description: rawTransaction.description,
           amount,
           category: rawTransaction.category,
+          categoryFromRule,
           method: rawTransaction.paymentMethod,
           status: rawTransaction.status,
         },

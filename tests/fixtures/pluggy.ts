@@ -251,3 +251,23 @@ export const ALL_TABLES_PII_SUBSTRINGS = [
   FAKE_RECEIVER_CNPJ,
   FAKE_ACCOUNT_HOLDER_CPF,
 ];
+
+/**
+ * TASK-008 (DT-019) - valores SHA-256 de referencia, calculados de forma
+ * INDEPENDENTE de `hashDocument` (via `node:crypto` direto neste arquivo de
+ * fixture, na propria maquina do qa - nao reimportando a funcao de
+ * producao), para os testes de `hashDocument`/`fetchPluggyAllTransactions`
+ * terem poder de deteccao real contra uma implementacao que use outro
+ * algoritmo, um salt, ou normalize errado (licao do DT-011 - comparar
+ * `hashDocument(x)` consigo mesma so prova consistencia interna, nunca prova
+ * que o algoritmo e SHA-256 de verdade). `KNOWN_SHA256_HEX_CPF` e o SHA-256
+ * hex de "12345678900" (FAKE_PAYER_CPF so com digitos);
+ * `KNOWN_SHA256_HEX_CNPJ` e o SHA-256 hex de "12345678000195"
+ * (FAKE_RECEIVER_CNPJ so com digitos) - conferido via
+ * `printf '%s' "12345678900" | shasum -a 256` e
+ * `node -e "console.log(require('node:crypto').createHash('sha256').update('12345678900').digest('hex'))"`.
+ */
+export const KNOWN_SHA256_HEX_CPF =
+  "a8476735b37a541a38402a2e7037c79e2d217fe9780e5e34347156ef61eff42b";
+export const KNOWN_SHA256_HEX_CNPJ =
+  "ae9351af0d397d503ea2ec21addc17e364b940411cfa37d8e8874c06b550a40b";

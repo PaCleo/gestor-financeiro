@@ -1,4 +1,5 @@
 import { PluggyClient } from "pluggy-sdk";
+import { hashDocument } from "@/lib/category-rules";
 
 /**
  * Erro de dominio: `CLIENT_ID`/`CLIENT_SECRET` ausentes ou vazias.
@@ -313,6 +314,12 @@ export class PluggyTransactionsFetchError extends Error {
  * Formato cru (ja traduzido, sem PII) de uma Transaction devolvida pela
  * Pluggy. `amount` continua CRU - a normalizacao de sinal por tipo de conta
  * (DT-007) e responsabilidade de `lib/sync.ts`, nao deste modulo.
+ *
+ * TASK-008 (DT-019): `counterpartyDocumentHashes` e o UNICO traco que
+ * sobrevive de `paymentData.payer`/`.receiver` - sempre um array de HASHES
+ * (nunca o documento cru), calculado DENTRO de `fetchPluggyAllTransactions`
+ * com a MESMA `hashDocument` (`@/lib/category-rules`) usada no cadastro de
+ * regras (Criterio de aceite #2/#5).
  */
 export type PluggyRawTransaction = {
   pluggyTransactionId: string;
@@ -323,7 +330,27 @@ export type PluggyRawTransaction = {
   status: "PENDING" | "POSTED";
   category: string | null;
   paymentMethod: string | null;
+  counterpartyDocumentHashes: string[];
 };
+
+/**
+ * Calcula os hashes da contraparte (payer/receiver) de uma transacao a
+ * partir do `paymentData` cru da Pluggy - o documento cru NUNCA sai desta
+ * funcao, so o hash (Criterio de aceite #5, DT-019). Deduplicado (Set) -
+ * uma transferencia entre contas proprias, onde payer e receiver tem o
+ * MESMO documento, devolve um unico hash.
+ */
+function extractCounterpartyDocumentHashes(paymentData?: {
+  payer?: { documentNumber?: { value?: string } };
+  receiver?: { documentNumber?: { value?: string } };
+}): string[] {
+  const rawDocuments = [
+    paymentData?.payer?.documentNumber?.value,
+    paymentData?.receiver?.documentNumber?.value,
+  ].filter((value): value is string => Boolean(value));
+
+  return Array.from(new Set(rawDocuments.map((document) => hashDocument(document))));
+}
 
 const DEFAULT_TRANSACTION_STATUS = "POSTED";
 
@@ -371,6 +398,9 @@ export async function fetchPluggyAllTransactions(
       status: t.status ?? DEFAULT_TRANSACTION_STATUS,
       category: t.category,
       paymentMethod: t.paymentData?.paymentMethod ?? null,
+      counterpartyDocumentHashes: extractCounterpartyDocumentHashes(
+        t.paymentData,
+      ),
     }));
   } catch {
     throw new PluggyTransactionsFetchError();

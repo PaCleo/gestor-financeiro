@@ -82,6 +82,32 @@ export function buildTransaction(
     // task existir. Sobrescrito nos testes desta task que se importam com
     // o valor (ex.: status PENDING).
     status: undefined,
+    // TASK-008: Transaction ganha `categoryFromRule String?` (nullable,
+    // DT-013 - regra de migration permanente: a tabela ja tem 432 linhas
+    // reais). Mesmo truque de `status`/`balance` acima: `undefined` faz o
+    // Prisma tratar a chave como "nao informada", entao os testes de
+    // TASK-001 a TASK-007 que criam Transaction via este fixture SEM saber
+    // desse campo novo continuam funcionando ANTES da migration desta task
+    // existir. So sobrescrito nos testes desta task que se importam com o
+    // valor (ver tests/integration/sync.integration.test.ts e
+    // tests/integration/transactions.integration.test.ts).
+    categoryFromRule: undefined,
+    ...overrides,
+  };
+}
+
+/**
+ * TASK-008 (DT-019): fixture de `CategoryRule`. `documentHash` aqui e SEMPRE
+ * um hash ja calculado pelo proprio teste (via `hashDocument` de
+ * `@/lib/category-rules` - a UNICA fonte de hash, Criterio de aceite #2) -
+ * este fixture nunca aceita um documento cru, para nao normalizar a pratica
+ * de "montar a linha da tabela com o CPF/CNPJ direto" em nenhum teste.
+ */
+export function buildCategoryRule(overrides: Record<string, unknown> = {}) {
+  return {
+    documentHash: `hash-${uniqueSuffix()}`,
+    category: "Mercado",
+    label: "Mercado do bairro",
     ...overrides,
   };
 }

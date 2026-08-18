@@ -65,16 +65,22 @@ export class AccountNotFoundError extends Error {
 }
 
 /**
- * Resolve a categoria efetiva de uma transacao (Criterio de aceite #2,
- * DT-010): `categoryOverride ?? category`. ESCOPO DESTA TASK: so essa
- * precedencia override->Pluggy. A regra por CPF/CNPJ (DT-019) e a TASK-008,
- * NAO implementada aqui.
+ * Resolve a categoria efetiva de uma transacao (Criterio de aceite #8 da
+ * TASK-008, DT-019, estende o DT-010): `categoryOverride ?? categoryFromRule
+ * ?? category`. Tres niveis de precedencia - o override manual do usuario
+ * vence a regra por CPF/CNPJ, que por sua vez vence a categoria bruta da
+ * Pluggy.
  */
 export function resolveTransactionCategory(transaction: {
   category: string | null;
   categoryOverride: string | null;
+  categoryFromRule: string | null;
 }): string | null {
-  return transaction.categoryOverride ?? transaction.category;
+  return (
+    transaction.categoryOverride ??
+    transaction.categoryFromRule ??
+    transaction.category
+  );
 }
 
 export interface TransactionListItem {
@@ -157,6 +163,7 @@ export async function listTransactions(
     category: resolveTransactionCategory({
       category: row.category,
       categoryOverride: row.categoryOverride,
+      categoryFromRule: row.categoryFromRule,
     }),
   }));
 

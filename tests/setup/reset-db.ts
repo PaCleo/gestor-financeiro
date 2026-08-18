@@ -19,6 +19,26 @@ const ALL_TABLES = [
   "BankItem",
 ] as const;
 
+/**
+ * TASK-008 (DT-019): `CategoryRule` e uma tabela NOVA e standalone (sem FK
+ * de/para as demais 5). Deliberadamente NAO adicionada a `ALL_TABLES`
+ * acima: `resetDatabase` e chamado pelo `beforeEach`/`afterEach` de TODOS os
+ * testes de integracao ja existentes (bank-item, items, transactions,
+ * schema) - se o TRUNCATE referenciasse uma tabela que so passa a existir
+ * depois da migration desta task, os 405 testes ja verdes quebrariam em RED
+ * pelo motivo ERRADO (tabela ausente) assim que este arquivo fosse
+ * importado, antes mesmo do coder implementar a TASK-008. Os testes desta
+ * task que usam `CategoryRule` chamam `resetCategoryRuleTable` a parte,
+ * SOMENTE dentro do proprio describe/arquivo que precisa dela.
+ */
+export async function resetCategoryRuleTable(
+  client: RawExecutableClient,
+): Promise<void> {
+  await client.$executeRawUnsafe(
+    'TRUNCATE TABLE "CategoryRule" RESTART IDENTITY CASCADE;',
+  );
+}
+
 export async function resetDatabase(client: RawExecutableClient): Promise<void> {
   const quotedTables = ALL_TABLES.map((table) => `"${table}"`).join(", ");
   await client.$executeRawUnsafe(

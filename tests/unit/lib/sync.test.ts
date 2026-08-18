@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Testes unitarios de lib/sync.ts (TASK-006 - Sync de Accounts e
@@ -101,6 +101,7 @@ const {
   fetchPluggyAccountsMock,
   fetchPluggyAllTransactionsMock,
   listActiveBankItemsMock,
+  getCategoryRuleHashMapMock,
 } = vi.hoisted(() => ({
   findUniqueMock: vi.fn(),
   updateMock: vi.fn(),
@@ -109,6 +110,11 @@ const {
   fetchPluggyAccountsMock: vi.fn(),
   fetchPluggyAllTransactionsMock: vi.fn(),
   listActiveBankItemsMock: vi.fn(),
+  // TASK-008 (DT-019): `syncBankItem` passa a resolver `categoryFromRule`
+  // buscando o mapa hash->categoria de `@/lib/category-rules`
+  // (`getCategoryRuleHashMap`) - mockado inteiramente, mesmo padrao de
+  // `@/lib/pluggy`/`@/lib/bank-item` neste arquivo (DT-004).
+  getCategoryRuleHashMapMock: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -133,6 +139,10 @@ vi.mock("@/lib/pluggy", () => ({
 
 vi.mock("@/lib/bank-item", () => ({
   listActiveBankItems: listActiveBankItemsMock,
+}));
+
+vi.mock("@/lib/category-rules", () => ({
+  getCategoryRuleHashMap: getCategoryRuleHashMapMock,
 }));
 
 const BANK_ITEM_ID = "bankitem-cuid-123";
@@ -172,9 +182,25 @@ function buildSyncTransaction(overrides: Record<string, unknown> = {}) {
     status: "POSTED",
     category: "Alimentação",
     paymentMethod: null,
+    // TASK-008 (DT-019): `fetchPluggyAllTransactions` agora sempre devolve
+    // `counterpartyDocumentHashes` (ver lib/pluggy.ts) - default `[]` (sem
+    // contraparte que case com nenhuma regra), sobrescrito nos testes desta
+    // task que se importam com o valor.
+    counterpartyDocumentHashes: [] as string[],
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  // TASK-008: default seguro (mapa VAZIO) para todos os testes que nao se
+  // importam com categorizacao por regra - sem isso, os testes desta task
+  // que sobrescrevem com `.mockResolvedValueOnce` continuariam funcionando,
+  // mas os testes JA EXISTENTES (TASK-006/007) quebrariam assim que o coder
+  // implementasse a chamada a `getCategoryRuleHashMap` dentro de
+  // `syncBankItem`, ja que um mock sem implementacao devolve `undefined`
+  // (nao uma Promise<Map> resolvida).
+  getCategoryRuleHashMapMock.mockResolvedValue(new Map());
+});
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -441,6 +467,146 @@ describe("syncBankItem - fluxo feliz: accounts e transactions em serie (Criterio
 
     expect(firstAccountUpsertOrder).toBeLessThan(firstAccountTxFetchOrder);
     expect(firstAccountTxFetchOrder).toBeLessThan(secondAccountUpsertOrder);
+  });
+});
+
+/**
+ * TASK-008 (DT-019) - `categoryFromRule`. `syncBankItem` busca o mapa
+ * hash->categoria UMA VEZ (via `getCategoryRuleHashMap` de
+ * `@/lib/category-rules`) e usa `rawTransaction.counterpartyDocumentHashes`
+ * (ja calculados por `fetchPluggyAllTransactions`, ver lib/pluggy.ts) para
+ * resolver a categoria de cada transacao antes do upsert. Nunca grava
+ * documento - so a categoria resolvida (Criterio de aceite #6).
+ */
+describe("syncBankItem - categoryFromRule via hash da contraparte (Criterio de aceite #6, DT-019)", () => {
+  it("transacao cuja contraparte casa com uma regra recebe categoryFromRule = categoria da regra", async () => {
+    findUniqueMock.mockResolvedValueOnce(buildMockBankItemRow());
+    fetchPluggyAccountsMock.mockResolvedValueOnce([buildSyncAccount()]);
+    accountUpsertMock.mockResolvedValueOnce({ id: "internal-account-1" });
+    fetchPluggyAllTransactionsMock.mockResolvedValueOnce([
+      buildSyncTransaction({
+        pluggyTransactionId: "tx-com-regra",
+        counterpartyDocumentHashes: ["hash-do-mercado"],
+      }),
+    ]);
+    transactionUpsertMock.mockResolvedValueOnce({ id: "internal-tx-1" });
+    updateMock.mockResolvedValueOnce(buildMockBankItemRow());
+    getCategoryRuleHashMapMock.mockResolvedValueOnce(
+      new Map([["hash-do-mercado", "Mercado"]]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(BANK_ITEM_ID);
+
+    expect(transactionUpsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ categoryFromRule: "Mercado" }),
+      }),
+    );
+  });
+
+  it("transacao SEM contraparte que case com nenhuma regra recebe categoryFromRule = null", async () => {
+    findUniqueMock.mockResolvedValueOnce(buildMockBankItemRow());
+    fetchPluggyAccountsMock.mockResolvedValueOnce([buildSyncAccount()]);
+    accountUpsertMock.mockResolvedValueOnce({ id: "internal-account-1" });
+    fetchPluggyAllTransactionsMock.mockResolvedValueOnce([
+      buildSyncTransaction({
+        pluggyTransactionId: "tx-sem-regra",
+        counterpartyDocumentHashes: ["hash-desconhecido"],
+      }),
+    ]);
+    transactionUpsertMock.mockResolvedValueOnce({ id: "internal-tx-1" });
+    updateMock.mockResolvedValueOnce(buildMockBankItemRow());
+    getCategoryRuleHashMapMock.mockResolvedValueOnce(
+      new Map([["hash-do-mercado", "Mercado"]]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(BANK_ITEM_ID);
+
+    expect(transactionUpsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ categoryFromRule: null }),
+      }),
+    );
+  });
+
+  it("transacao sem NENHUM hash de contraparte (counterpartyDocumentHashes vazio) recebe categoryFromRule = null, mesmo com regras cadastradas", async () => {
+    findUniqueMock.mockResolvedValueOnce(buildMockBankItemRow());
+    fetchPluggyAccountsMock.mockResolvedValueOnce([buildSyncAccount()]);
+    accountUpsertMock.mockResolvedValueOnce({ id: "internal-account-1" });
+    fetchPluggyAllTransactionsMock.mockResolvedValueOnce([
+      buildSyncTransaction({
+        pluggyTransactionId: "tx-sem-contraparte",
+        counterpartyDocumentHashes: [],
+      }),
+    ]);
+    transactionUpsertMock.mockResolvedValueOnce({ id: "internal-tx-1" });
+    updateMock.mockResolvedValueOnce(buildMockBankItemRow());
+    getCategoryRuleHashMapMock.mockResolvedValueOnce(
+      new Map([["hash-do-mercado", "Mercado"]]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(BANK_ITEM_ID);
+
+    expect(transactionUpsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ categoryFromRule: null }),
+      }),
+    );
+  });
+
+  it("busca o mapa de regras UMA UNICA VEZ por chamada de syncBankItem, mesmo com varias accounts/transactions", async () => {
+    findUniqueMock.mockResolvedValueOnce(buildMockBankItemRow());
+    fetchPluggyAccountsMock.mockResolvedValueOnce([
+      buildSyncAccount({ pluggyAccountId: "acc-1" }),
+      buildSyncAccount({ pluggyAccountId: "acc-2" }),
+    ]);
+    accountUpsertMock
+      .mockResolvedValueOnce({ id: "internal-account-1" })
+      .mockResolvedValueOnce({ id: "internal-account-2" });
+    fetchPluggyAllTransactionsMock
+      .mockResolvedValueOnce([
+        buildSyncTransaction({ pluggyTransactionId: "tx-a" }),
+        buildSyncTransaction({ pluggyTransactionId: "tx-b" }),
+      ])
+      .mockResolvedValueOnce([
+        buildSyncTransaction({ pluggyTransactionId: "tx-c" }),
+      ]);
+    transactionUpsertMock.mockResolvedValue({ id: "internal-tx" });
+    updateMock.mockResolvedValueOnce(buildMockBankItemRow());
+    getCategoryRuleHashMapMock.mockResolvedValueOnce(new Map());
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(BANK_ITEM_ID);
+
+    expect(getCategoryRuleHashMapMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("upsert de transacao NUNCA recebe um hash/documento cru - so a categoria resolvida (ou null)", async () => {
+    findUniqueMock.mockResolvedValueOnce(buildMockBankItemRow());
+    fetchPluggyAccountsMock.mockResolvedValueOnce([buildSyncAccount()]);
+    accountUpsertMock.mockResolvedValueOnce({ id: "internal-account-1" });
+    fetchPluggyAllTransactionsMock.mockResolvedValueOnce([
+      buildSyncTransaction({
+        pluggyTransactionId: "tx-hash-nao-vaza",
+        counterpartyDocumentHashes: ["hash-do-mercado"],
+      }),
+    ]);
+    transactionUpsertMock.mockResolvedValueOnce({ id: "internal-tx-1" });
+    updateMock.mockResolvedValueOnce(buildMockBankItemRow());
+    getCategoryRuleHashMapMock.mockResolvedValueOnce(
+      new Map([["hash-do-mercado", "Mercado"]]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(BANK_ITEM_ID);
+
+    const createArg = transactionUpsertMock.mock.calls[0][0].create;
+    expect(createArg.categoryFromRule).toBe("Mercado");
+    expect(JSON.stringify(createArg)).not.toContain("hash-do-mercado");
+    expect(Object.keys(createArg)).not.toContain("counterpartyDocumentHashes");
   });
 });
 

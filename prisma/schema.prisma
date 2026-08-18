@@ -36,6 +36,15 @@
 // - Nenhum campo de PII de `paymentData` (documentNumber/payer/receiver/
 //   nomes/dados de conta de terceiros) e persistido - so
 //   `Transaction.method` (ja existente) recebe `paymentData.paymentMethod`.
+//
+// TASK-008 (regras de categorizacao por CPF/CNPJ, resolve o DT-019):
+// - Novo model `CategoryRule` - `documentHash String @unique` guarda o
+//   SHA-256 hex do documento normalizado (NUNCA o documento cru - a regra
+//   de ouro da task, DT-017). `category`/`label` sao os dados exibidos ao
+//   usuario (o documento nao existe para exibir, so o hash).
+// - `Transaction.categoryFromRule String?` - NULLABLE (DT-013: a tabela ja
+//   tem 432 linhas reais; alem disso, correto por natureza - nem toda
+//   transacao casa com uma regra).
 
 generator client {
   provider = "prisma-client-js"
@@ -83,9 +92,19 @@ model Transaction {
   recurringBillId      String?
   recurringBill        RecurringBill? @relation(fields: [recurringBillId], references: [id])
   billInstance         RecurringBillInstance?
+  categoryFromRule     String?
 
   @@index([date])
   @@index([accountId])
+}
+
+model CategoryRule {
+  id           String   @id @default(cuid())
+  documentHash String   @unique
+  category     String
+  label        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model RecurringBill {

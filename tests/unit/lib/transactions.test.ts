@@ -8,10 +8,12 @@ import { describe, expect, it } from "vitest";
  * conforme o Criterio de aceite #7: "a query testada contra o Postgres
  * real"):
  *
- *   1. `resolveTransactionCategory` - a resolucao da categoria efetiva
- *      (Criterio de aceite #2, DT-010: `categoryOverride ?? category`).
- *      **Escopo desta task**: SO a precedencia override->Pluggy. A regra
- *      por CPF/CNPJ (DT-019) e a TASK-008, fora de escopo aqui.
+ *   1. `resolveTransactionCategory` - a resolucao da categoria efetiva.
+ *      TASK-007 (Criterio de aceite #2, DT-010) definiu `categoryOverride ??
+ *      category`. TASK-008 (Criterio de aceite #8, DT-019) ESTENDE a
+ *      precedencia para 3 niveis: `categoryOverride ?? categoryFromRule ??
+ *      category` - a regra por CPF/CNPJ entra no MEIO, entre o override
+ *      manual e a categoria crua da Pluggy.
  *   2. `transactionsQuerySchema` - a validacao Zod dos parametros de
  *      `GET /api/transactions` (Criterio de aceite #1 e #6 do prompt desta
  *      task: datas invalidas, limites fora de faixa e paginacao devem virar
@@ -34,48 +36,72 @@ import { describe, expect, it } from "vitest";
  *     export function resolveTransactionCategory(transaction: {
  *       category: string | null;
  *       categoryOverride: string | null;
+ *       categoryFromRule: string | null;
  *     }): string | null
- *       // return transaction.categoryOverride ?? transaction.category
- *       // (precedencia override -> Pluggy, DT-010, ESCOPO DESTA TASK - sem
- *       // regra de CPF/CNPJ, essa e a TASK-008/DT-019)
+ *       // return transaction.categoryOverride ?? transaction.categoryFromRule
+ *       //   ?? transaction.category
+ *       // (TASK-008, Criterio de aceite #8, DT-019: precedencia de 3 niveis -
+ *       // override manual > regra por CPF/CNPJ > categoria crua da Pluggy)
  */
 
-describe("resolveTransactionCategory - categoria efetiva = categoryOverride ?? category (Criterio de aceite #2, DT-010, escopo desta task)", () => {
-  it("com categoryOverride preenchido, mostra o override - nao a category da Pluggy", async () => {
+describe("resolveTransactionCategory - categoria efetiva = categoryOverride ?? categoryFromRule ?? category (Criterio de aceite #8, DT-019)", () => {
+  it("com categoryOverride preenchido, mostra o override - vence categoryFromRule E category", async () => {
     const { resolveTransactionCategory } = await import("@/lib/transactions");
 
     expect(
       resolveTransactionCategory({
         category: "Online shopping",
+        categoryFromRule: "Mercado",
         categoryOverride: "Presentes de aniversario",
       }),
     ).toBe("Presentes de aniversario");
   });
 
-  it("sem categoryOverride (null), mostra a category da Pluggy", async () => {
+  it("sem categoryOverride, com categoryFromRule preenchido, mostra a categoria DA REGRA - vence a category da Pluggy (o nivel do meio, o novo desta task)", async () => {
     const { resolveTransactionCategory } = await import("@/lib/transactions");
 
     expect(
-      resolveTransactionCategory({ category: "Housing", categoryOverride: null }),
-    ).toBe("Housing");
+      resolveTransactionCategory({
+        category: "Online shopping",
+        categoryFromRule: "Mercado",
+        categoryOverride: null,
+      }),
+    ).toBe("Mercado");
   });
 
-  it("categoryOverride undefined (mesmo efeito de null para o operador ??) tambem cai para category", async () => {
+  it("sem categoryOverride NEM categoryFromRule (ambos null), mostra a category da Pluggy - o terceiro nivel vencendo isoladamente", async () => {
     const { resolveTransactionCategory } = await import("@/lib/transactions");
 
     expect(
       resolveTransactionCategory({
         category: "Housing",
+        categoryFromRule: null,
+        categoryOverride: null,
+      }),
+    ).toBe("Housing");
+  });
+
+  it("categoryOverride e categoryFromRule undefined (mesmo efeito de null para ??) tambem caem para category", async () => {
+    const { resolveTransactionCategory } = await import("@/lib/transactions");
+
+    expect(
+      resolveTransactionCategory({
+        category: "Housing",
+        categoryFromRule: undefined as unknown as null,
         categoryOverride: undefined as unknown as null,
       }),
     ).toBe("Housing");
   });
 
-  it("ambos ausentes (category e categoryOverride null) -> null, sem lancar", async () => {
+  it("os tres ausentes (category, categoryFromRule e categoryOverride null) -> null, sem lancar", async () => {
     const { resolveTransactionCategory } = await import("@/lib/transactions");
 
     expect(
-      resolveTransactionCategory({ category: null, categoryOverride: null }),
+      resolveTransactionCategory({
+        category: null,
+        categoryFromRule: null,
+        categoryOverride: null,
+      }),
     ).toBeNull();
   });
 
@@ -83,7 +109,23 @@ describe("resolveTransactionCategory - categoria efetiva = categoryOverride ?? c
     const { resolveTransactionCategory } = await import("@/lib/transactions");
 
     expect(
-      resolveTransactionCategory({ category: "Housing", categoryOverride: "" }),
+      resolveTransactionCategory({
+        category: "Housing",
+        categoryFromRule: "Mercado",
+        categoryOverride: "",
+      }),
+    ).toBe("");
+  });
+
+  it("categoryFromRule string vazia PERMANECE como resolucao (mesmo motivo acima) - nao cai para category", async () => {
+    const { resolveTransactionCategory } = await import("@/lib/transactions");
+
+    expect(
+      resolveTransactionCategory({
+        category: "Housing",
+        categoryFromRule: "",
+        categoryOverride: null,
+      }),
     ).toBe("");
   });
 });
