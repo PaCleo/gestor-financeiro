@@ -41,7 +41,7 @@
 
 | Task | Título | Status |
 |---|---|---|
-| [TASK-009](./tasks/TASK-009.md) | Lançamentos manuais + conta Dinheiro | EM ANDAMENTO |
+| [TASK-009](./tasks/TASK-009.md) | Lançamentos manuais + conta Dinheiro | CONCLUÍDA |
 
 ## Fase 4 — Contas fixas
 **Critério de pronto:** vejo o que falta pagar no mês.
