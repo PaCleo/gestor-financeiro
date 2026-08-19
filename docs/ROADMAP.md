@@ -41,7 +41,7 @@
 
 | Task | Título | Status |
 |---|---|---|
-| — | CRUD de transações manuais + conta "Dinheiro" | PENDENTE |
+| [TASK-009](./tasks/TASK-009.md) | Lançamentos manuais + conta Dinheiro | EM ANDAMENTO |
 
 ## Fase 4 — Contas fixas
 **Critério de pronto:** vejo o que falta pagar no mês.
