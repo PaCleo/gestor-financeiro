@@ -55,7 +55,7 @@
 
 | Task | Título | Status |
 |---|---|---|
-| [TASK-010](./tasks/TASK-010.md) | Dashboard: gastos por categoria + resumo do mês (DT-018) | EM ANDAMENTO |
+| [TASK-010](./tasks/TASK-010.md) | Dashboard: gastos por categoria + resumo do mês (DT-018) | CONCLUÍDA |
 | — | Fatura do cartão (fecha a Fase 5) | PENDENTE |
 
 ## Fase 6 — Refinos
