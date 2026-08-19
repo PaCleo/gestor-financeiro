@@ -351,6 +351,23 @@ Três garantias verificadas sobre as 615 combinações possíveis (incluindo val
    `PARTIAL_SUCCESS`, o estado é `PRECISA_ACAO`, não `PARCIAL` — o que o usuário precisa fazer é
    mais acionável do que o que faltou coletar. Resolver a ação tende a resolver o parcial junto.
 
+### Fatura do cartão vem de endpoint dedicado (sondado na TASK-011, 2026-08-19)
+
+A pergunta aberta da seção 9 ("fatura via endpoint ou agrupar transações?") está **respondida**:
+a Pluggy tem `fetchCreditCardBills(accountId)`, e funciona nos dados reais. **Não** precisamos
+agrupar transações por período.
+
+- Só contas `CREDIT` têm faturas; `BANK` não. Um cartão pode ter **0 faturas** (visto num cartão real).
+- `CreditCardBills`: `{ id, dueDate: Date, totalAmount: number (positivo, valor devido),
+  minimumPaymentAmount: number | null, payments[], financeCharges[], createdAt, updatedAt }`.
+- Dados reais: um cartão com **13 faturas**; a mais recente vence 10/08, total R$3.408,84, mínimo
+  R$511,32 (bate com `account.creditData.balanceDueDate`/`minimumPayment`).
+- **O endpoint devolve faturas fechadas.** A fatura "aberta" (ainda acumulando, forecast) não vem
+  necessariamente nessa lista — o `account.creditData` (balanceCloseDate/balanceDueDate) e as
+  transações `PENDING` refletem o ciclo corrente. Refinamento futuro se precisarmos da fatura aberta.
+- **Não há transação-linha na fatura** (o tipo não traz os itens). Ligar transação→fatura exigiria
+  `creditCardMetadata.billId`, que a TASK-006 descartou.
+
 ### Formato de erro do SDK (descoberto sondando a API real na TASK-005)
 
 O `pluggy-sdk` **não** rejeita com um objeto que tenha `statusCode` no topo, nem com um `Error`
