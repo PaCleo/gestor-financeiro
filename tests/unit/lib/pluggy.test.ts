@@ -3,6 +3,7 @@ import {
   FAKE_ACCOUNT_HOLDER_CPF,
   FAKE_PAYER_CPF,
   FAKE_RECEIVER_CNPJ,
+  KNOWN_SHA256_HEX_CPF,
   buildMockPluggyAccountResponse,
   buildMockPluggyCreditCardAccountResponse,
   buildRealCreditCardPurchaseTransaction,
@@ -1376,7 +1377,7 @@ describe("fetchPluggyAllTransactions - sucesso (Criterio de aceite #4 da TASK-00
     expect(result.status).toBe("PENDING");
   });
 
-  it("extrai SOMENTE paymentData.paymentMethod e descarta payer/receiver/documentNumber/nomes/dados de conta (Criterio de aceite #6/#7, resolve o DT-017)", async () => {
+  it("extrai SOMENTE paymentData.paymentMethod + o HASH da contraparte, e descarta payer/receiver/documentNumber/nomes/dados de conta CRUS (Criterio de aceite #5/#6/#7 da TASK-008, resolve o DT-017, estende a TASK-006)", async () => {
     process.env.CLIENT_ID = FAKE_CLIENT_ID;
     process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
     fetchAllTransactionsMock.mockResolvedValueOnce([
@@ -1385,11 +1386,18 @@ describe("fetchPluggyAllTransactions - sucesso (Criterio de aceite #4 da TASK-00
 
     const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
     const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+    const { hashDocument } = await import("@/lib/category-rules");
 
+    // TASK-008 (DT-019): `counterpartyDocumentHashes` e o UNICO campo novo
+    // que sobrevive de `paymentData.payer`/`.receiver` - e sempre um HASH,
+    // calculado pela MESMA `hashDocument` usada no cadastro de regras
+    // (Criterio de aceite #2, "o eixo da task" - senao o casamento no sync
+    // nunca bate).
     expect(Object.keys(result).sort()).toEqual(
       [
         "amount",
         "category",
+        "counterpartyDocumentHashes",
         "date",
         "description",
         "paymentMethod",
@@ -1399,6 +1407,13 @@ describe("fetchPluggyAllTransactions - sucesso (Criterio de aceite #4 da TASK-00
       ].sort(),
     );
     expect(result.paymentMethod).toBe("PIX");
+    expect(result.counterpartyDocumentHashes).toEqual(
+      expect.arrayContaining([
+        hashDocument(FAKE_PAYER_CPF),
+        hashDocument(FAKE_RECEIVER_CNPJ),
+      ]),
+    );
+    expect(result.counterpartyDocumentHashes).toHaveLength(2);
 
     const rawResult = JSON.stringify(result);
     expect(rawResult).not.toContain(FAKE_PAYER_CPF);
@@ -1413,7 +1428,7 @@ describe("fetchPluggyAllTransactions - sucesso (Criterio de aceite #4 da TASK-00
     expect(rawResult).not.toContain("routingNumber");
   });
 
-  it("paymentMethod fica null quando a transacao nao tem paymentData (ex.: compra de cartao)", async () => {
+  it("paymentMethod fica null E counterpartyDocumentHashes fica [] quando a transacao nao tem paymentData (ex.: compra de cartao)", async () => {
     process.env.CLIENT_ID = FAKE_CLIENT_ID;
     process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
     fetchAllTransactionsMock.mockResolvedValueOnce([
@@ -1427,6 +1442,7 @@ describe("fetchPluggyAllTransactions - sucesso (Criterio de aceite #4 da TASK-00
     const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
 
     expect(result.paymentMethod).toBeNull();
+    expect(result.counterpartyDocumentHashes).toEqual([]);
   });
 
   it("NUNCA deixa creditCardMetadata (cardNumber)/merchant vazarem, mesmo vindo preenchidos no payload real", async () => {
@@ -1472,6 +1488,134 @@ describe("fetchPluggyAllTransactions - sucesso (Criterio de aceite #4 da TASK-00
     logSpy.mockRestore();
     errorSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+});
+
+/**
+ * TASK-008 (DT-019) - `counterpartyDocumentHashes`. O hash da contraparte
+ * (payer/receiver) e calculado DENTRO desta funcao (Criterio de aceite #5):
+ * o documento cru (`paymentData.payer.documentNumber.value`/
+ * `.receiver.documentNumber.value`) morre aqui - so o hash sai. `hashDocument`
+ * (de `@/lib/category-rules`) e a UNICA fonte de hash do projeto (Criterio
+ * de aceite #2) - estes testes usam a funcao REAL (nao mockada) para provar
+ * que o valor devolvido bate EXATAMENTE com o que o cadastro de regras
+ * calcularia para o mesmo documento, senao o casamento no sync nunca
+ * acontece.
+ */
+describe("fetchPluggyAllTransactions - counterpartyDocumentHashes (Criterio de aceite #5 da TASK-008, DT-019)", () => {
+  it("com payer E receiver preenchidos, devolve os DOIS hashes (nao os documentos)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({ id: "pluggy-tx-payer-receiver" }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+    const { hashDocument } = await import("@/lib/category-rules");
+
+    expect(result.counterpartyDocumentHashes.sort()).toEqual(
+      [hashDocument(FAKE_PAYER_CPF), hashDocument(FAKE_RECEIVER_CNPJ)].sort(),
+    );
+  });
+
+  it("so payer preenchido (sem receiver) -> hashes com UM item, o hash do payer", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({
+        id: "pluggy-tx-so-payer",
+        paymentData: {
+          payer: {
+            documentNumber: { type: "CPF", value: FAKE_PAYER_CPF },
+            name: "Fulano de Tal Pagador",
+          },
+          receiver: undefined,
+          paymentMethod: "TED",
+        },
+      }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+    const { hashDocument } = await import("@/lib/category-rules");
+
+    expect(result.counterpartyDocumentHashes).toEqual([
+      hashDocument(FAKE_PAYER_CPF),
+    ]);
+  });
+
+  it("paymentData presente mas SEM payer/receiver (ex.: boleto sem contraparte identificada) -> hashes []", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({
+        id: "pluggy-tx-sem-contraparte",
+        paymentData: {
+          payer: undefined,
+          receiver: undefined,
+          paymentMethod: "BOLETO",
+          boletoMetadata: { digitableLine: "34191.79001 01043.510047" },
+        },
+      }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+
+    expect(result.counterpartyDocumentHashes).toEqual([]);
+    const rawResult = JSON.stringify(result);
+    expect(rawResult).not.toContain("digitableLine");
+    expect(rawResult).not.toContain("34191");
+  });
+
+  it("payer e receiver com o MESMO documento (ex.: transferencia entre contas proprias) -> hashes deduplicados, UM item so", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({
+        id: "pluggy-tx-mesma-contraparte",
+        paymentData: {
+          payer: {
+            documentNumber: { type: "CPF", value: FAKE_PAYER_CPF },
+          },
+          receiver: {
+            documentNumber: { type: "CPF", value: FAKE_PAYER_CPF },
+          },
+          paymentMethod: "PIX",
+        },
+      }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+    const { hashDocument } = await import("@/lib/category-rules");
+
+    expect(result.counterpartyDocumentHashes).toEqual([
+      hashDocument(FAKE_PAYER_CPF),
+    ]);
+  });
+
+  it("o hash bate com o valor SHA-256 CONHECIDO (calculado de forma independente, nao so contra a propria hashDocument - licao do DT-011)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildTransactionWithPaymentData({
+        id: "pluggy-tx-hash-conhecido",
+        paymentData: {
+          payer: {
+            documentNumber: { type: "CPF", value: FAKE_PAYER_CPF },
+          },
+          receiver: undefined,
+          paymentMethod: "PIX",
+        },
+      }),
+    ]);
+
+    const { fetchPluggyAllTransactions } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID);
+
+    expect(result.counterpartyDocumentHashes).toEqual([KNOWN_SHA256_HEX_CPF]);
   });
 });
 

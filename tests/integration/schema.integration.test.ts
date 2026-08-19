@@ -357,6 +357,94 @@ describe('Transaction.status - coluna NOT NULL com default "POSTED" no Postgres 
   });
 });
 
+describe("CategoryRule - tabela nova no Postgres real (Criterio de aceite #1 da TASK-008, DT-019)", () => {
+  afterEach(async () => {
+    await prisma.categoryRule.deleteMany();
+  });
+
+  it("cria a tabela CategoryRule com documentHash UNIQUE, category obrigatoria e label opcional", async () => {
+    const columns = await prisma.$queryRaw<
+      { column_name: string; is_nullable: string }[]
+    >`
+      SELECT column_name, is_nullable
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'CategoryRule'
+    `;
+    const columnNames = columns.map((c) => c.column_name);
+    expect(columnNames).toEqual(
+      expect.arrayContaining(["id", "documentHash", "category", "label"]),
+    );
+
+    const documentHashColumn = columns.find(
+      (c) => c.column_name === "documentHash",
+    );
+    expect(documentHashColumn?.is_nullable).toBe("NO");
+    const categoryColumn = columns.find((c) => c.column_name === "category");
+    expect(categoryColumn?.is_nullable).toBe("NO");
+    const labelColumn = columns.find((c) => c.column_name === "label");
+    expect(labelColumn?.is_nullable).toBe("YES");
+  });
+
+  it("rejeita uma segunda linha com o mesmo documentHash (constraint UNIQUE de verdade no Postgres)", async () => {
+    await prisma.categoryRule.create({
+      data: { documentHash: "hash-duplicado", category: "Mercado" },
+    });
+
+    let caughtError: unknown;
+    try {
+      await prisma.categoryRule.create({
+        data: { documentHash: "hash-duplicado", category: "Farmácia" },
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeDefined();
+    expect((caughtError as { code?: string }).code).toBe("P2002");
+  });
+
+  it("a tabela CategoryRule NAO expoe nenhuma coluna de documento cru (document/cpf/cnpj)", async () => {
+    const columns = await prisma.$queryRaw<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'CategoryRule'
+    `;
+    const columnNames = columns.map((c) => c.column_name.toLowerCase());
+
+    for (const forbidden of ["document", "cpf", "cnpj", "documentnumber"]) {
+      expect(columnNames).not.toContain(forbidden);
+    }
+  });
+});
+
+describe("Transaction.categoryFromRule - coluna nullable no Postgres real (Criterio de aceite #1 da TASK-008, DT-013, DT-019)", () => {
+  it("a coluna categoryFromRule existe e e nullable", async () => {
+    const columns = await prisma.$queryRaw<
+      { column_name: string; is_nullable: string }[]
+    >`
+      SELECT column_name, is_nullable
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'Transaction'
+        AND column_name = 'categoryFromRule'
+    `;
+
+    expect(columns).toHaveLength(1);
+    expect(columns[0].is_nullable).toBe("YES");
+  });
+
+  it("uma Transaction criada sem categoryFromRule explicito persiste com o valor NULL (nao quebra insercao existente)", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    const account = await prisma.account.create({
+      data: buildAccount(bankItem.id),
+    });
+    const created = await prisma.transaction.create({
+      data: buildTransaction(account.id, { categoryFromRule: undefined }),
+    });
+
+    expect(created.categoryFromRule).toBeNull();
+  });
+});
+
 describe("Edge cases de integridade", () => {
   it("rejeita Transaction com accountId inexistente (integridade referencial)", async () => {
     let caughtError: unknown;

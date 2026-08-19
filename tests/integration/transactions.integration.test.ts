@@ -86,6 +86,72 @@ describe("listTransactions - categoria efetiva contra o Postgres real (Criterio 
   });
 });
 
+describe("listTransactions - categoria efetiva de TRES niveis contra o Postgres real (Criterio de aceite #8 da TASK-008, DT-019, estende a TASK-007)", () => {
+  it("com categoryOverride, categoryFromRule E category todos preenchidos, mostra o OVERRIDE - vence os outros dois", async () => {
+    const account = await createAccountWithBankItem();
+    await prisma.transaction.create({
+      data: buildTransaction(account.id, {
+        category: "Online shopping",
+        categoryFromRule: "Mercado",
+        categoryOverride: "Presentes",
+      }),
+    });
+
+    const { listTransactions } = await import("@/lib/transactions");
+    const result = await listTransactions({ page: 1, limit: 50 });
+
+    expect(result.transactions[0].category).toBe("Presentes");
+  });
+
+  it("SEM categoryOverride, com categoryFromRule preenchido, mostra a categoria DA REGRA - vence a category da Pluggy (o nivel do meio)", async () => {
+    const account = await createAccountWithBankItem();
+    await prisma.transaction.create({
+      data: buildTransaction(account.id, {
+        category: "Online shopping",
+        categoryFromRule: "Mercado",
+        categoryOverride: null,
+      }),
+    });
+
+    const { listTransactions } = await import("@/lib/transactions");
+    const result = await listTransactions({ page: 1, limit: 50 });
+
+    expect(result.transactions[0].category).toBe("Mercado");
+  });
+
+  it("SEM categoryOverride E SEM categoryFromRule (ambos null), mostra a category da Pluggy - o terceiro nivel vencendo isoladamente", async () => {
+    const account = await createAccountWithBankItem();
+    await prisma.transaction.create({
+      data: buildTransaction(account.id, {
+        category: "Housing",
+        categoryFromRule: null,
+        categoryOverride: null,
+      }),
+    });
+
+    const { listTransactions } = await import("@/lib/transactions");
+    const result = await listTransactions({ page: 1, limit: 50 });
+
+    expect(result.transactions[0].category).toBe("Housing");
+  });
+
+  it("os tres null -> categoria null, sem placeholder", async () => {
+    const account = await createAccountWithBankItem();
+    await prisma.transaction.create({
+      data: buildTransaction(account.id, {
+        category: null,
+        categoryFromRule: null,
+        categoryOverride: null,
+      }),
+    });
+
+    const { listTransactions } = await import("@/lib/transactions");
+    const result = await listTransactions({ page: 1, limit: 50 });
+
+    expect(result.transactions[0].category).toBeNull();
+  });
+});
+
 describe("listTransactions - filtro por conta (secao 2 e Criterio de aceite #1/#3)", () => {
   it("com accountId, retorna SOMENTE as transacoes daquela conta, mesmo com outra conta tendo transacoes", async () => {
     const accountA = await createAccountWithBankItem({ name: "Conta A" });

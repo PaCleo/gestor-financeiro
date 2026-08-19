@@ -34,6 +34,7 @@
 |---|---|---|
 | [TASK-006](./tasks/TASK-006.md) | Sync de Accounts e Transactions (`POST /api/sync`) | CONCLUÍDA |
 | [TASK-007](./tasks/TASK-007.md) | Tela de transações com filtros (fecha a Fase 2) | CONCLUÍDA |
+| [TASK-008](./tasks/TASK-008.md) | Regras de categorização por CPF/CNPJ (DT-019) | CONCLUÍDA |
 
 ## Fase 3 — Lançamentos manuais
 **Critério de pronto:** insiro um Pix manual e ele aparece junto com o resto.
