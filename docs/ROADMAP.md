@@ -63,5 +63,5 @@
 
 | Task | Título | Status |
 |---|---|---|
-| [TASK-012](./tasks/TASK-012.md) | Navegação entre as telas | EM ANDAMENTO |
+| [TASK-012](./tasks/TASK-012.md) | Navegação entre as telas | CONCLUÍDA |
 | — | Webhooks, conciliação manual↔Pluggy, tratamento de expiração de consentimento | PENDENTE |
