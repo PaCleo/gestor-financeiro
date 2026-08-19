@@ -271,3 +271,67 @@ export const KNOWN_SHA256_HEX_CPF =
   "a8476735b37a541a38402a2e7037c79e2d217fe9780e5e34347156ef61eff42b";
 export const KNOWN_SHA256_HEX_CNPJ =
   "ae9351af0d397d503ea2ec21addc17e364b940411cfa37d8e8874c06b550a40b";
+
+/**
+ * TASK-011 (Fatura do cartao, fecha a Fase 5) - payload completo de
+ * `CreditCardBills` (node_modules/pluggy-sdk/dist/types/creditCardBills.d.ts),
+ * confirmado contra a sondagem real (docs/PREMISSA.md secao 11, 2026-08-19):
+ * um cartao real tinha 13 faturas; a mais recente vencia 10/08, total
+ * R$3.408,84, minimo R$511,32 - os mesmos valores usados aqui como default.
+ *
+ * MESMA REGRA da secao 11/DT-011 (as fixtures desta task sao as mais
+ * sensiveis a "mock fiel a doc, infiel a API real" desde o 404 da TASK-005):
+ * o payload inclui `payments`/`financeCharges` PREENCHIDOS (nao so `[]`),
+ * para que os testes de "so persiste id/dueDate/totalAmount/
+ * minimumPaymentAmount" tenham poder de deteccao real contra QUALQUER um
+ * desses campos vazando (a mesma tecnica de
+ * `buildMockPluggyItemResponse`/`buildMockPluggyAccountResponse` acima).
+ */
+export function buildMockPluggyCreditCardBillResponse(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id: `pluggy-bill-${uniqueSuffix()}`,
+    dueDate: new Date("2026-08-10T00:00:00.000Z"),
+    totalAmount: 3408.84,
+    totalAmountCurrencyCode: "BRL",
+    minimumPaymentAmount: 511.32,
+    allowsInstallments: true,
+    financeCharges: [
+      {
+        id: "finance-charge-1",
+        type: "LATE_PAYMENT_INTEREST",
+        amount: 12.5,
+        currencyCode: "BRL",
+        additionalInfo: null,
+      },
+    ],
+    payments: [
+      {
+        id: "payment-1",
+        valueType: "FULL_PAYMENT",
+        paymentDate: new Date("2026-07-09T00:00:00.000Z"),
+        paymentMode: "PIX",
+        amount: 3200.0,
+        currencyCode: "BRL",
+      },
+    ],
+    createdAt: new Date("2026-07-11T00:00:00.000Z"),
+    updatedAt: new Date("2026-07-11T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+/**
+ * Fatura sem minimo definido - `minimumPaymentAmount: null` (o tipo real da
+ * SDK e `number | null`, secao 11 da PREMISSA). Cenario de borda explicito
+ * do prompt desta task ("minimumPaymentAmount nullable").
+ */
+export function buildMockPluggyCreditCardBillWithoutMinimum(
+  overrides: Record<string, unknown> = {},
+) {
+  return buildMockPluggyCreditCardBillResponse({
+    minimumPaymentAmount: null,
+    ...overrides,
+  });
+}

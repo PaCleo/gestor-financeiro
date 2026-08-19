@@ -1,7 +1,12 @@
 import { prisma } from "@/lib/db";
 import { listActiveBankItems } from "@/lib/bank-item";
-import { fetchPluggyAccounts, fetchPluggyAllTransactions } from "@/lib/pluggy";
+import {
+  fetchPluggyAccounts,
+  fetchPluggyAllTransactions,
+  fetchPluggyBills,
+} from "@/lib/pluggy";
 import { getCategoryRuleHashMap } from "@/lib/category-rules";
+import { syncCreditCardBills } from "@/lib/bills";
 
 /**
  * Sync de Accounts e Transactions (TASK-006, primeira task da Fase 2).
@@ -110,8 +115,19 @@ const PLUGGY_SOURCE = "PLUGGY";
  *       (DT-007), `category` cru (investigacao do DT-010, Criterio 9) e
  *       `method` = `paymentMethod` ja extraido por `fetchPluggyAllTransactions`
  *       (DT-017 resolvido em `lib/pluggy.ts` - aqui so repassamos).
+ *    d. Se `rawAccount.type === "CREDIT"` (TASK-011, secao 5 do
+ *       TASK-011.md): busca as faturas dessa account
+ *       (`fetchPluggyBills(rawAccount.pluggyAccountId)`) e persiste por
+ *       upsert (`syncCreditCardBills(account.id, rawBills)`, `@/lib/bills` -
+ *       `account.id` e o id INTERNO, ja upsertado). Contas `BANK` (ou
+ *       qualquer type diferente de `"CREDIT"`) NUNCA disparam essa busca -
+ *       Criterio de aceite #5. Um cartao sem fatura (`rawBills: []`) nao
+ *       quebra - `syncCreditCardBills` so nao encontra nada para persistir.
  * 5. So DEPOIS de tudo sincronizado, atualiza `BankItem.lastSyncAt`.
- * 6. Devolve `{ bankItemId, accountsSynced, transactionsSynced }`.
+ * 6. Devolve `{ bankItemId, accountsSynced, transactionsSynced }` - a
+ *    contagem de faturas sincronizadas NAO e exposta aqui (Criterio de
+ *    aceite #3 da TASK-011: nao quebra os testes existentes que fazem
+ *    toEqual exato desse objeto).
  *
  * TASK-008 (DT-019): antes do loop de accounts, busca o mapa hash->categoria
  * (`getCategoryRuleHashMap`, `@/lib/category-rules`) UMA UNICA VEZ (nao a
@@ -204,6 +220,11 @@ export async function syncBankItem(bankItemId: string): Promise<{
         },
       });
       transactionsSynced += 1;
+    }
+
+    if (rawAccount.type === "CREDIT") {
+      const rawBills = await fetchPluggyBills(rawAccount.pluggyAccountId);
+      await syncCreditCardBills(account.id, rawBills);
     }
   }
 

@@ -142,6 +142,29 @@ export function buildRecurringBill(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * TASK-011 (Fatura do cartao, fecha a Fase 5): fixture de uma linha de
+ * `CreditCardBill` ja persistida - usada pelos testes que criam a fatura
+ * DIRETO no Postgres (via `prisma.creditCardBill.create`), em vez de
+ * sincronizar da Pluggy (isso e coberto por
+ * tests/fixtures/pluggy.ts:buildMockPluggyCreditCardBillResponse +
+ * lib/sync.ts). Valores default batem com a sondagem real (docs/PREMISSA.md
+ * secao 11): vencimento 2026-08-10, total R$3.408,84, minimo R$511,32.
+ */
+export function buildCreditCardBill(
+  accountId: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    pluggyBillId: `bill-${uniqueSuffix()}`,
+    accountId,
+    dueDate: new Date("2026-08-10T00:00:00.000Z"),
+    totalAmount: "3408.84",
+    minimumPaymentAmount: "511.32",
+    ...overrides,
+  };
+}
+
 export function buildRecurringBillInstance(
   recurringBillId: string,
   overrides: Record<string, unknown> = {},

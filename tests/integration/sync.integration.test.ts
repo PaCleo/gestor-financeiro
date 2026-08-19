@@ -16,6 +16,8 @@ import {
   FAKE_RECEIVER_CNPJ,
   buildMockPluggyAccountResponse,
   buildMockPluggyCreditCardAccountResponse,
+  buildMockPluggyCreditCardBillResponse,
+  buildMockPluggyCreditCardBillWithoutMinimum,
   buildMockPluggyTransactionResponse,
   buildRealCreditCardPaymentTransaction,
   buildRealCreditCardPurchaseTransaction,
@@ -48,15 +50,25 @@ const {
   fetchAccountsMock,
   fetchAllTransactionsMock,
   fetchTransactionsMock,
+  fetchCreditCardBillsMock,
 } = vi.hoisted(() => {
   const fetchAccountsMock = vi.fn();
   const fetchAllTransactionsMock = vi.fn();
   const fetchTransactionsMock = vi.fn();
+  // TASK-011: mockado desde o inicio (nao so nos describes novos) - varios
+  // testes JA EXISTENTES (TASK-006/007/008) usam contas CREDIT
+  // (buildMockPluggyCreditCardAccountResponse), e o codigo de producao REAL
+  // de lib/pluggy.ts (nao mockado neste arquivo - so "pluggy-sdk" e) vai
+  // chamar `client.fetchCreditCardBills` para QUALQUER conta CREDIT assim
+  // que o coder implementar a TASK-011. Sem este mock, essas chamadas
+  // quebrariam com "fetchCreditCardBills is not a function".
+  const fetchCreditCardBillsMock = vi.fn();
   const PluggyClientMock = vi.fn().mockImplementation(function () {
     return {
       fetchAccounts: fetchAccountsMock,
       fetchAllTransactions: fetchAllTransactionsMock,
       fetchTransactions: fetchTransactionsMock,
+      fetchCreditCardBills: fetchCreditCardBillsMock,
     };
   });
   return {
@@ -64,6 +76,7 @@ const {
     fetchAccountsMock,
     fetchAllTransactionsMock,
     fetchTransactionsMock,
+    fetchCreditCardBillsMock,
   };
 });
 
@@ -91,6 +104,13 @@ beforeEach(async () => {
   vi.clearAllMocks();
   process.env.CLIENT_ID = FAKE_CLIENT_ID;
   process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+  // TASK-011: default seguro (nenhuma fatura) para TODOS os testes deste
+  // arquivo, inclusive os JA EXISTENTES das tasks anteriores que usam contas
+  // CREDIT mas nao se importam com fatura - ver comentario no vi.hoisted
+  // acima. Isto NAO toca a tabela CreditCardBill (so o mock do SDK) -
+  // deliberadamente seguro de chamar mesmo ANTES da migration desta task
+  // existir.
+  fetchCreditCardBillsMock.mockResolvedValue(pageResponse([]));
 });
 
 afterEach(async () => {
@@ -912,5 +932,374 @@ describe("syncBankItem - TESTE DE PII CRITICO: o documento de paymentData jamais
       expect(hash).not.toContain(FAKE_PAYER_CPF.replace(/\D/g, ""));
       expect(hash).not.toContain(FAKE_RECEIVER_CNPJ.replace(/\D/g, ""));
     }
+  });
+});
+
+/**
+ * TASK-011 (Fatura do cartao, fecha a Fase 5) - `syncBankItem` PONTA A PONTA
+ * contra o Postgres real. Mesma tecnica das secoes acima: so `"pluggy-sdk"`
+ * e mockado, o codigo real de `lib/pluggy.ts`/`lib/bills.ts`/`lib/sync.ts`
+ * roda de verdade ate gravar no banco.
+ *
+ * Nota sobre limpeza: `resetDatabase` (chamado no beforeEach/afterEach
+ * globais deste arquivo) faz `TRUNCATE "Account" ... CASCADE` - como
+ * `CreditCardBill.account` tera uma FK para `Account` (Criterio de aceite #1
+ * da TASK-011), o TRUNCATE CASCADE do Postgres already limpa
+ * `CreditCardBill` sozinho (CASCADE de TRUNCATE ignora a politica de
+ * `onDelete` da FK e sempre propaga) - nao precisa de um
+ * `resetCreditCardBillTable` dedicado aqui.
+ */
+describe("syncBankItem - faturas do cartao: persistidas SO para contas CREDIT (Criterio de aceite #1/#5 da TASK-011)", () => {
+  it("conta CREDIT: cada fatura da Pluggy e persistida com pluggyBillId/dueDate/totalAmount/minimumPaymentAmount", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardAccountResponse({ id: "acc-bill-1" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([]);
+    fetchCreditCardBillsMock.mockResolvedValueOnce(
+      pageResponse([
+        buildMockPluggyCreditCardBillResponse({
+          id: "pluggy-bill-real-1",
+          dueDate: new Date("2026-08-10T00:00:00.000Z"),
+          totalAmount: 3408.84,
+          minimumPaymentAmount: 511.32,
+        }),
+      ]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const account = await prisma.account.findUniqueOrThrow({
+      where: { pluggyAccountId: "acc-bill-1" },
+    });
+    const bill = await prisma.creditCardBill.findUniqueOrThrow({
+      where: { pluggyBillId: "pluggy-bill-real-1" },
+    });
+    expect(bill.accountId).toBe(account.id);
+    expect(bill.dueDate.toISOString()).toBe("2026-08-10T00:00:00.000Z");
+    expect(bill.totalAmount.toFixed(2)).toBe("3408.84");
+    expect(bill.minimumPaymentAmount?.toFixed(2)).toBe("511.32");
+  });
+
+  it("conta BANK: fetchCreditCardBills NUNCA e chamado com o pluggyAccountId da conta BANK, e nenhuma CreditCardBill e criada (Criterio de aceite #5)", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyAccountResponse({ id: "acc-bank-no-bill" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([]);
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    expect(fetchCreditCardBillsMock).not.toHaveBeenCalledWith(
+      "acc-bank-no-bill",
+    );
+    const account = await prisma.account.findUniqueOrThrow({
+      where: { pluggyAccountId: "acc-bank-no-bill" },
+    });
+    const bills = await prisma.creditCardBill.findMany({
+      where: { accountId: account.id },
+    });
+    expect(bills).toHaveLength(0);
+  });
+
+  it("uma conta BANK e uma CREDIT no MESMO BankItem: so a CREDIT dispara fetchCreditCardBills", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([
+        buildMockPluggyAccountResponse({ id: "acc-mista-bank" }),
+        buildMockPluggyCreditCardAccountResponse({ id: "acc-mista-credit" }),
+      ]),
+    );
+    fetchAllTransactionsMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    fetchCreditCardBillsMock.mockResolvedValueOnce(pageResponse([]));
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    expect(fetchCreditCardBillsMock).toHaveBeenCalledTimes(1);
+    expect(fetchCreditCardBillsMock).toHaveBeenCalledWith("acc-mista-credit");
+  });
+
+  it("cartao sem faturas (results: []) nao quebra - sync termina normalmente, sem nenhuma CreditCardBill criada", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardAccountResponse({ id: "acc-sem-fatura" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([]);
+    fetchCreditCardBillsMock.mockResolvedValueOnce(pageResponse([]));
+
+    const { syncBankItem } = await import("@/lib/sync");
+    const result = await syncBankItem(bankItem.id);
+
+    expect(result.accountsSynced).toBe(1);
+    const account = await prisma.account.findUniqueOrThrow({
+      where: { pluggyAccountId: "acc-sem-fatura" },
+    });
+    const bills = await prisma.creditCardBill.findMany({
+      where: { accountId: account.id },
+    });
+    expect(bills).toHaveLength(0);
+    const reloaded = await prisma.bankItem.findUniqueOrThrow({
+      where: { id: bankItem.id },
+    });
+    expect(reloaded.lastSyncAt).not.toBeNull();
+  });
+
+  it("minimumPaymentAmount null (fatura sem minimo) e persistido como null, nao 0 nem uma string vazia", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardAccountResponse({ id: "acc-sem-minimo" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([]);
+    fetchCreditCardBillsMock.mockResolvedValueOnce(
+      pageResponse([
+        buildMockPluggyCreditCardBillWithoutMinimum({ id: "pluggy-bill-sem-minimo-real" }),
+      ]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const bill = await prisma.creditCardBill.findUniqueOrThrow({
+      where: { pluggyBillId: "pluggy-bill-sem-minimo-real" },
+    });
+    expect(bill.minimumPaymentAmount).toBeNull();
+  });
+});
+
+describe("syncBankItem - dedup de faturas por pluggyBillId, upsert NAO duplica (Criterio de aceite #4 da TASK-011, 'a dedup e sagrada')", () => {
+  it("sincronizar a MESMA fatura duas vezes NAO duplica - contagem de registros comprova", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValue(
+      pageResponse([buildMockPluggyCreditCardAccountResponse({ id: "acc-dedup-fatura" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValue([]);
+    fetchCreditCardBillsMock.mockResolvedValueOnce(
+      pageResponse([
+        buildMockPluggyCreditCardBillResponse({ id: "bill-dedup", totalAmount: 1000 }),
+      ]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    fetchCreditCardBillsMock.mockResolvedValueOnce(
+      pageResponse([
+        buildMockPluggyCreditCardBillResponse({ id: "bill-dedup", totalAmount: 1000 }),
+      ]),
+    );
+    await syncBankItem(bankItem.id);
+
+    const matching = await prisma.creditCardBill.findMany({
+      where: { pluggyBillId: "bill-dedup" },
+    });
+    expect(matching).toHaveLength(1);
+    expect(await prisma.creditCardBill.count()).toBe(1);
+  });
+
+  it("uma fatura que MUDA (ex.: totalAmount atualizado apos um pagamento parcial) faz UPSERT do registro existente, nao cria uma segunda linha", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValue(
+      pageResponse([buildMockPluggyCreditCardAccountResponse({ id: "acc-fatura-muda" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValue([]);
+    fetchCreditCardBillsMock.mockResolvedValueOnce(
+      pageResponse([
+        buildMockPluggyCreditCardBillResponse({
+          id: "bill-muda",
+          totalAmount: 3408.84,
+          minimumPaymentAmount: 511.32,
+        }),
+      ]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const beforeUpdate = await prisma.creditCardBill.findUniqueOrThrow({
+      where: { pluggyBillId: "bill-muda" },
+    });
+    expect(beforeUpdate.totalAmount.toFixed(2)).toBe("3408.84");
+
+    fetchCreditCardBillsMock.mockResolvedValueOnce(
+      pageResponse([
+        buildMockPluggyCreditCardBillResponse({
+          id: "bill-muda",
+          totalAmount: 2900.0,
+          minimumPaymentAmount: 435.0,
+        }),
+      ]),
+    );
+    await syncBankItem(bankItem.id);
+
+    const matching = await prisma.creditCardBill.findMany({
+      where: { pluggyBillId: "bill-muda" },
+    });
+    expect(matching).toHaveLength(1);
+    expect(matching[0].id).toBe(beforeUpdate.id);
+    expect(matching[0].totalAmount.toFixed(2)).toBe("2900.00");
+    expect(matching[0].minimumPaymentAmount?.toFixed(2)).toBe("435.00");
+  });
+
+  it("13 faturas do MESMO cartao (o numero real de um cartao na sondagem) sao todas persistidas, sem colisao entre elas", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardAccountResponse({ id: "acc-13-faturas" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([]);
+    const thirteenBills = Array.from({ length: 13 }, (_, index) =>
+      buildMockPluggyCreditCardBillResponse({ id: `bill-real-${index}` }),
+    );
+    fetchCreditCardBillsMock.mockResolvedValueOnce(pageResponse(thirteenBills));
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const account = await prisma.account.findUniqueOrThrow({
+      where: { pluggyAccountId: "acc-13-faturas" },
+    });
+    const bills = await prisma.creditCardBill.findMany({
+      where: { accountId: account.id },
+    });
+    expect(bills).toHaveLength(13);
+  });
+});
+
+describe("syncBankItem - o sync de faturas NAO regride a Fase 2: Transactions e Accounts permanecem intactos (Criterio de aceite #6 da TASK-011)", () => {
+  it("sincronizar as faturas de um cartao NAO altera nem apaga nenhuma Transaction ja sincronizada daquela conta", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardAccountResponse({ id: "acc-nao-regride" })]),
+    );
+    const purchase = buildRealCreditCardPurchaseTransaction({ id: "tx-nao-regride" });
+    fetchAllTransactionsMock.mockResolvedValueOnce([purchase]);
+    fetchCreditCardBillsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardBillResponse({ id: "bill-nao-regride" })]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const transaction = await prisma.transaction.findUniqueOrThrow({
+      where: { pluggyTransactionId: "tx-nao-regride" },
+    });
+    // A normalizacao de sinal do DT-007 continua valendo - a fatura nao
+    // interfere na transacao.
+    expect(transaction.amount.toFixed(2)).toBe("-138.83");
+    expect(await prisma.transaction.count()).toBe(1);
+  });
+
+  it("re-sincronizar (accounts + transactions + faturas, todos ja existentes) mantem a MESMA contagem de Transaction/Account - nada e duplicado nem apagado", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValue(
+      pageResponse([
+        buildMockPluggyAccountResponse({ id: "acc-re-sync-bank" }),
+        buildMockPluggyCreditCardAccountResponse({ id: "acc-re-sync-credit" }),
+      ]),
+    );
+    fetchAllTransactionsMock
+      .mockResolvedValueOnce([
+        buildMockPluggyTransactionResponse({ id: "tx-re-sync-bank" }),
+      ])
+      .mockResolvedValueOnce([
+        buildRealCreditCardPurchaseTransaction({ id: "tx-re-sync-credit" }),
+      ]);
+    fetchCreditCardBillsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardBillResponse({ id: "bill-re-sync" })]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const accountsBefore = await prisma.account.count();
+    const transactionsBefore = await prisma.transaction.count();
+    expect(accountsBefore).toBe(2);
+    expect(transactionsBefore).toBe(2);
+
+    fetchAllTransactionsMock
+      .mockResolvedValueOnce([
+        buildMockPluggyTransactionResponse({ id: "tx-re-sync-bank" }),
+      ])
+      .mockResolvedValueOnce([
+        buildRealCreditCardPurchaseTransaction({ id: "tx-re-sync-credit" }),
+      ]);
+    fetchCreditCardBillsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardBillResponse({ id: "bill-re-sync" })]),
+    );
+    await syncBankItem(bankItem.id);
+
+    expect(await prisma.account.count()).toBe(accountsBefore);
+    expect(await prisma.transaction.count()).toBe(transactionsBefore);
+    expect(await prisma.creditCardBill.count()).toBe(1);
+  });
+});
+
+describe("syncBankItem - Decimal, sem erro de float (Criterio da secao 2 - valores monetarios usam Decimal)", () => {
+  it("totalAmount e minimumPaymentAmount sobrevivem ao round-trip Postgres sem drift de ponto flutuante (valores reais da sondagem: 3408.84/511.32)", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardAccountResponse({ id: "acc-decimal" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([]);
+    fetchCreditCardBillsMock.mockResolvedValueOnce(
+      pageResponse([
+        buildMockPluggyCreditCardBillResponse({
+          id: "bill-decimal",
+          totalAmount: 3408.84,
+          minimumPaymentAmount: 511.32,
+        }),
+      ]),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(bankItem.id);
+
+    const bill = await prisma.creditCardBill.findUniqueOrThrow({
+      where: { pluggyBillId: "bill-decimal" },
+    });
+    expect(bill.totalAmount.toFixed(2)).toBe("3408.84");
+    expect(bill.minimumPaymentAmount?.toFixed(2)).toBe("511.32");
+    // Nao e um float JS cru (Decimal do Prisma) - a comparacao por STRING
+    // exata acima e o que prova ausencia de erro de arredondamento.
+    expect(bill.totalAmount.toNumber()).toBeCloseTo(3408.84, 2);
+  });
+});
+
+describe("syncBankItem - API da Pluggy fora do ar ao buscar faturas (caminho de erro, Item LOGIN_ERROR/OUTDATED)", () => {
+  it("fetchCreditCardBills falhando propaga um erro tratado: syncBankItem rejeita, lastSyncAt NAO e atualizado, mas a Account e a Transaction JA sincronizadas daquela conta permanecem", async () => {
+    const bankItem = await prisma.bankItem.create({ data: buildBankItem() });
+    fetchAccountsMock.mockResolvedValueOnce(
+      pageResponse([buildMockPluggyCreditCardAccountResponse({ id: "acc-fatura-falha" })]),
+    );
+    fetchAllTransactionsMock.mockResolvedValueOnce([
+      buildRealCreditCardPurchaseTransaction({ id: "tx-fatura-falha" }),
+    ]);
+    fetchCreditCardBillsMock.mockRejectedValueOnce({
+      message: "Item credentials are outdated",
+      code: 400,
+      codeDescription: "ITEM_LOGIN_ERROR",
+    });
+
+    const { syncBankItem } = await import("@/lib/sync");
+
+    await expect(syncBankItem(bankItem.id)).rejects.toThrow();
+
+    const account = await prisma.account.findUniqueOrThrow({
+      where: { pluggyAccountId: "acc-fatura-falha" },
+    });
+    expect(account).not.toBeNull();
+    const transaction = await prisma.transaction.findUniqueOrThrow({
+      where: { pluggyTransactionId: "tx-fatura-falha" },
+    });
+    expect(transaction).not.toBeNull();
+    const reloaded = await prisma.bankItem.findUniqueOrThrow({
+      where: { id: bankItem.id },
+    });
+    expect(reloaded.lastSyncAt).toBeNull();
+    expect(await prisma.creditCardBill.count()).toBe(0);
   });
 });

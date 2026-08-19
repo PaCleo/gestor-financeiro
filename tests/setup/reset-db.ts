@@ -39,6 +39,27 @@ export async function resetCategoryRuleTable(
   );
 }
 
+/**
+ * TASK-011 (Fatura do cartao, fecha a Fase 5): `CreditCardBill` e uma tabela
+ * NOVA, com FK para `Account` (existente). Deliberadamente NAO adicionada a
+ * `ALL_TABLES` acima - MESMO motivo de `resetCategoryRuleTable` (TASK-008,
+ * comentario acima): `resetDatabase` roda no `beforeEach`/`afterEach` de
+ * TODOS os testes de integracao ja existentes; se o TRUNCATE referenciasse
+ * uma tabela que so passa a existir depois da migration desta task, a suite
+ * inteira quebraria em RED pelo motivo ERRADO (tabela ausente) assim que
+ * este arquivo fosse importado, antes mesmo do coder implementar a
+ * TASK-011. Os testes desta task que usam `CreditCardBill` chamam
+ * `resetCreditCardBillTable` a parte, SOMENTE dentro do proprio
+ * describe/arquivo que precisa dela.
+ */
+export async function resetCreditCardBillTable(
+  client: RawExecutableClient,
+): Promise<void> {
+  await client.$executeRawUnsafe(
+    'TRUNCATE TABLE "CreditCardBill" RESTART IDENTITY CASCADE;',
+  );
+}
+
 export async function resetDatabase(client: RawExecutableClient): Promise<void> {
   const quotedTables = ALL_TABLES.map((table) => `"${table}"`).join(", ");
   await client.$executeRawUnsafe(
