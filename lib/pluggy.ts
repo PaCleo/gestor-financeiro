@@ -406,3 +406,75 @@ export async function fetchPluggyAllTransactions(
     throw new PluggyTransactionsFetchError();
   }
 }
+
+/**
+ * Erro de dominio: falha ao buscar as CreditCardBills de uma Account na
+ * Pluggy (`client.fetchCreditCardBills`). Mensagem fixa e generica, mesmo
+ * padrao dos demais erros deste modulo.
+ */
+export class PluggyBillsFetchError extends Error {
+  constructor() {
+    super(
+      "Nao foi possivel obter as faturas deste cartao. Tente novamente em instantes.",
+    );
+    this.name = "PluggyBillsFetchError";
+  }
+}
+
+/**
+ * Formato cru (ja traduzido, sem campos fora de escopo) de uma
+ * CreditCardBill devolvida pela Pluggy (TASK-011).
+ */
+export type PluggyRawBill = {
+  pluggyBillId: string;
+  dueDate: Date;
+  totalAmount: number;
+  minimumPaymentAmount: number | null;
+};
+
+/**
+ * Busca as CreditCardBills (faturas fechadas) de uma Account `CREDIT` na
+ * Pluggy (TASK-011 - Fatura do cartao, fecha a Fase 5). So contas CREDIT tem
+ * faturas - a decisao de chamar isso SO para contas CREDIT vive em
+ * `lib/sync.ts`, nao aqui.
+ *
+ * - Reutiliza a MESMA validacao de `CLIENT_ID`/`CLIENT_SECRET` das demais
+ *   funcoes deste modulo - rejeita com `PluggyConfigError` SEM instanciar
+ *   `PluggyClient` quando as credenciais estao ausentes/vazias.
+ * - Quando configurado: `client.fetchCreditCardBills(pluggyAccountId)`
+ *   (node_modules/pluggy-sdk/dist/client.d.ts:197), que devolve
+ *   `PageResponse<CreditCardBills>` (`{ results, page, total, totalPages }`)
+ *   - usa SOMENTE `.results`. Um cartao pode devolver `results: []` (visto
+ *     num cartao real, secao 11 da PREMISSA) - nao lanca, so devolve `[]`.
+ * - Reconstroi CADA fatura campo a campo (nunca espalha `...bill`), para
+ *   nunca deixar `payments`/`financeCharges`/`allowsInstallments`/
+ *   `totalAmountCurrencyCode` vazarem - fora de escopo desta task (secao 4
+ *   do TASK-011.md), mesmo padrao de defesa em profundidade de
+ *   `fetchPluggyAccounts`/`fetchPluggyAllTransactions`.
+ * - Qualquer falha do SDK vira `PluggyBillsFetchError`, mensagem
+ *   fixa/generica, sem stack/detalhe do SDK.
+ * - Nenhum `console.*` em nenhum caminho.
+ */
+export async function fetchPluggyBills(
+  pluggyAccountId: string,
+): Promise<PluggyRawBill[]> {
+  const clientId = process.env.CLIENT_ID;
+  const clientSecret = process.env.CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new PluggyConfigError();
+  }
+
+  try {
+    const client = new PluggyClient({ clientId, clientSecret });
+    const page = await client.fetchCreditCardBills(pluggyAccountId);
+    return page.results.map((bill) => ({
+      pluggyBillId: bill.id,
+      dueDate: bill.dueDate,
+      totalAmount: bill.totalAmount,
+      minimumPaymentAmount: bill.minimumPaymentAmount,
+    }));
+  } catch {
+    throw new PluggyBillsFetchError();
+  }
+}

@@ -6,6 +6,8 @@ import {
   KNOWN_SHA256_HEX_CPF,
   buildMockPluggyAccountResponse,
   buildMockPluggyCreditCardAccountResponse,
+  buildMockPluggyCreditCardBillResponse,
+  buildMockPluggyCreditCardBillWithoutMinimum,
   buildRealCreditCardPurchaseTransaction,
   buildTransactionWithPaymentData,
 } from "../../fixtures/pluggy";
@@ -91,6 +93,7 @@ const {
   fetchAccountsMock,
   fetchAllTransactionsMock,
   fetchTransactionsMock,
+  fetchCreditCardBillsMock,
 } = vi.hoisted(() => {
     const createConnectTokenMock = vi.fn();
     // TASK-004: `lib/pluggy.ts` ganha `fetchPluggyItem`, que chama
@@ -116,6 +119,12 @@ const {
     const fetchAccountsMock = vi.fn();
     const fetchAllTransactionsMock = vi.fn();
     const fetchTransactionsMock = vi.fn();
+    // TASK-011: `lib/pluggy.ts` ganha `fetchPluggyBills` (chama
+    // `client.fetchCreditCardBills(accountId)`,
+    // node_modules/pluggy-sdk/dist/client.d.ts:197 - devolve
+    // `PageResponse<CreditCardBills>`). Mesma logica de reaproveitar o
+    // mesmo `PluggyClientMock` construivel.
+    const fetchCreditCardBillsMock = vi.fn();
     // IMPORTANTE: precisa ser uma `function` normal, NAO uma arrow function.
     // O SDK real (`node_modules/pluggy-sdk/dist/client.js`) e
     // `class PluggyClient extends BaseApi`, ou seja, so pode ser chamado com
@@ -139,6 +148,7 @@ const {
         fetchAccounts: fetchAccountsMock,
         fetchAllTransactions: fetchAllTransactionsMock,
         fetchTransactions: fetchTransactionsMock,
+        fetchCreditCardBills: fetchCreditCardBillsMock,
       };
     });
     return {
@@ -149,6 +159,7 @@ const {
       fetchAccountsMock,
       fetchAllTransactionsMock,
       fetchTransactionsMock,
+      fetchCreditCardBillsMock,
     };
   },
 );
@@ -1692,6 +1703,299 @@ describe("fetchPluggyAllTransactions - falha da Pluggy (API fora do ar, Item LOG
     await fetchPluggyAllTransactions(FAKE_PLUGGY_ACCOUNT_ID).catch(
       () => undefined,
     );
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+/**
+ * TASK-011 (Fatura do cartao, fecha a Fase 5) - fetchPluggyBills (Criterio
+ * de aceite #2). Reaproveita o `PluggyClientMock` hoisted no topo do arquivo
+ * (agora com `fetchCreditCardBills: fetchCreditCardBillsMock`).
+ *
+ * Contrato assumido (definido pelo qa nesta task - o coder implementa
+ * exatamente assim, ver secao 5 do TASK-011.md):
+ *
+ *   lib/pluggy.ts
+ *     export class PluggyBillsFetchError extends Error {}
+ *     export type PluggyRawBill = {
+ *       pluggyBillId: string;
+ *       dueDate: Date;
+ *       totalAmount: number;
+ *       minimumPaymentAmount: number | null;
+ *     };
+ *     export async function fetchPluggyBills(pluggyAccountId: string): Promise<PluggyRawBill[]>
+ *
+ * fetchPluggyBills deve:
+ *   - reutilizar a MESMA validacao de CLIENT_ID/CLIENT_SECRET das outras
+ *     funcoes - PluggyConfigError SEM instanciar PluggyClient;
+ *   - chamar `client.fetchCreditCardBills(pluggyAccountId)`
+ *     (node_modules/pluggy-sdk/dist/client.d.ts:197) e usar SOMENTE
+ *     `.results` (o payload real e `PageResponse<CreditCardBills>` -
+ *     `{ results, page, total, totalPages }`, mesmo formato de
+ *     `fetchAccounts`);
+ *   - reconstruir CADA fatura campo a campo - `{ pluggyBillId: bill.id,
+ *     dueDate: bill.dueDate, totalAmount: bill.totalAmount,
+ *     minimumPaymentAmount: bill.minimumPaymentAmount }` - NUNCA espalhar
+ *     (`...bill`), para nunca deixar `payments`/`financeCharges`/
+ *     `allowsInstallments`/`totalAmountCurrencyCode` vazarem (fora de
+ *     escopo desta task, secao 4 do TASK-011.md);
+ *   - traduzir qualquer falha do SDK em PluggyBillsFetchError, mensagem
+ *     fixa/generica, sem vazar detalhe do SDK - mesmo padrao das demais;
+ *   - nunca chamar console.log/warn/error.
+ */
+
+const FAKE_PLUGGY_CREDIT_ACCOUNT_ID = "acc-credit-3fa85f64-5717-4562-b3fc";
+
+describe("fetchPluggyBills - sucesso (Criterio de aceite #2 da TASK-011)", () => {
+  it("busca as faturas da conta e retorna pluggyBillId/dueDate/totalAmount/minimumPaymentAmount", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const rawBill = buildMockPluggyCreditCardBillResponse({
+      id: "pluggy-bill-1",
+      dueDate: new Date("2026-08-10T00:00:00.000Z"),
+      totalAmount: 3408.84,
+      minimumPaymentAmount: 511.32,
+    });
+    fetchCreditCardBillsMock.mockResolvedValueOnce({
+      results: [rawBill],
+      page: 1,
+      total: 1,
+      totalPages: 1,
+    });
+
+    const { fetchPluggyBills } = await import("@/lib/pluggy");
+    const result = await fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID);
+
+    expect(result).toEqual([
+      {
+        pluggyBillId: "pluggy-bill-1",
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: 3408.84,
+        minimumPaymentAmount: 511.32,
+      },
+    ]);
+  });
+
+  it("chama client.fetchCreditCardBills com o pluggyAccountId recebido, instanciando o PluggyClient com as credenciais do ambiente", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchCreditCardBillsMock.mockResolvedValueOnce({
+      results: [],
+      page: 1,
+      total: 0,
+      totalPages: 0,
+    });
+
+    const { fetchPluggyBills } = await import("@/lib/pluggy");
+    await fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID);
+
+    expect(PluggyClientMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: FAKE_CLIENT_ID,
+        clientSecret: FAKE_CLIENT_SECRET,
+      }),
+    );
+    expect(fetchCreditCardBillsMock).toHaveBeenCalledTimes(1);
+    expect(fetchCreditCardBillsMock).toHaveBeenCalledWith(
+      FAKE_PLUGGY_CREDIT_ACCOUNT_ID,
+    );
+  });
+
+  it("cartao sem faturas (results: []) devolve array vazio, sem lancar (cenario real confirmado na sondagem - um cartao tinha 0 faturas)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchCreditCardBillsMock.mockResolvedValueOnce({
+      results: [],
+      page: 1,
+      total: 0,
+      totalPages: 0,
+    });
+
+    const { fetchPluggyBills } = await import("@/lib/pluggy");
+
+    await expect(
+      fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID),
+    ).resolves.toEqual([]);
+  });
+
+  it("minimumPaymentAmount null (fatura sem minimo definido) e preservado como null, nao convertido para 0/undefined", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchCreditCardBillsMock.mockResolvedValueOnce({
+      results: [
+        buildMockPluggyCreditCardBillWithoutMinimum({ id: "pluggy-bill-sem-minimo" }),
+      ],
+      page: 1,
+      total: 1,
+      totalPages: 1,
+    });
+
+    const { fetchPluggyBills } = await import("@/lib/pluggy");
+    const [result] = await fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID);
+
+    expect(result.minimumPaymentAmount).toBeNull();
+  });
+
+  it("retorna varias faturas na mesma chamada (ex.: 13 faturas, o numero real de um cartao na sondagem), cada uma com seus proprios valores", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const thirteenBills = Array.from({ length: 13 }, (_, index) =>
+      buildMockPluggyCreditCardBillResponse({ id: `pluggy-bill-${index}` }),
+    );
+    fetchCreditCardBillsMock.mockResolvedValueOnce({
+      results: thirteenBills,
+      page: 1,
+      total: 13,
+      totalPages: 1,
+    });
+
+    const { fetchPluggyBills } = await import("@/lib/pluggy");
+    const result = await fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID);
+
+    expect(result).toHaveLength(13);
+  });
+
+  it("NUNCA deixa payments/financeCharges/allowsInstallments/totalAmountCurrencyCode vazarem, mesmo vindo preenchidos no payload real (defesa em profundidade, mesmo padrao de fetchPluggyAccounts)", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const rawBill = buildMockPluggyCreditCardBillResponse({
+      id: "pluggy-bill-payload-completo",
+    });
+    // Confirma que o payload de ENTRADA REALMENTE tem payments/financeCharges
+    // preenchidos - senao a asserção de nao-vazamento abaixo passaria por
+    // ausencia de mecanismo, nao por protecao (DT-011).
+    expect(rawBill.payments.length).toBeGreaterThan(0);
+    expect(rawBill.financeCharges.length).toBeGreaterThan(0);
+    fetchCreditCardBillsMock.mockResolvedValueOnce({
+      results: [rawBill],
+      page: 1,
+      total: 1,
+      totalPages: 1,
+    });
+
+    const { fetchPluggyBills } = await import("@/lib/pluggy");
+    const result = await fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID);
+
+    expect(Object.keys(result[0]).sort()).toEqual(
+      ["dueDate", "minimumPaymentAmount", "pluggyBillId", "totalAmount"].sort(),
+    );
+    const rawResult = JSON.stringify(result);
+    expect(rawResult).not.toContain("payments");
+    expect(rawResult).not.toContain("financeCharges");
+    expect(rawResult).not.toContain("allowsInstallments");
+    expect(rawResult).not.toContain("totalAmountCurrencyCode");
+    expect(rawResult).not.toContain("payment-1");
+    expect(rawResult).not.toContain("finance-charge-1");
+  });
+
+  it("nao chama console.log/warn/error no caminho feliz", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchCreditCardBillsMock.mockResolvedValueOnce({
+      results: [buildMockPluggyCreditCardBillResponse()],
+      page: 1,
+      total: 1,
+      totalPages: 1,
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { fetchPluggyBills } = await import("@/lib/pluggy");
+    await fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID);
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+describe("fetchPluggyBills - credenciais ausentes", () => {
+  it("rejeita com PluggyConfigError SEM instanciar PluggyClient nem chamar fetchCreditCardBills", async () => {
+    delete process.env.CLIENT_ID;
+    delete process.env.CLIENT_SECRET;
+
+    const { fetchPluggyBills, PluggyConfigError } = await import(
+      "@/lib/pluggy"
+    );
+
+    await expect(
+      fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID),
+    ).rejects.toBeInstanceOf(PluggyConfigError);
+    expect(PluggyClientMock).not.toHaveBeenCalled();
+    expect(fetchCreditCardBillsMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchPluggyBills - falha da Pluggy (API fora do ar, Item LOGIN_ERROR/OUTDATED)", () => {
+  it("traduz uma falha de rede/timeout em PluggyBillsFetchError, sem vazar mensagem/stack originais", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    const sdkError = new Error("connect ETIMEDOUT 200.1.2.3:443");
+    sdkError.stack =
+      "Error: connect ETIMEDOUT\n    at Object.<anonymous> (/app/node_modules/pluggy-sdk/dist/baseApi.js:99:20)";
+    fetchCreditCardBillsMock.mockRejectedValueOnce(sdkError);
+
+    const { fetchPluggyBills, PluggyBillsFetchError } = await import(
+      "@/lib/pluggy"
+    );
+
+    let caughtError: unknown;
+    try {
+      await fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID);
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(PluggyBillsFetchError);
+    const message = (caughtError as Error).message;
+    expect(message.length).toBeGreaterThan(0);
+    expect(message).not.toContain("ETIMEDOUT");
+    expect(message).not.toContain(".ts:");
+    expect(message).not.toContain(".js:");
+  });
+
+  it("traduz um objeto plano de erro HTTP (Item LOGIN_ERROR/OUTDATED, 4xx/5xx) em PluggyBillsFetchError", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchCreditCardBillsMock.mockRejectedValueOnce({
+      message: "Item credentials are outdated",
+      code: 400,
+      codeDescription: "ITEM_LOGIN_ERROR",
+    });
+
+    const { fetchPluggyBills, PluggyBillsFetchError } = await import(
+      "@/lib/pluggy"
+    );
+
+    await expect(
+      fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID),
+    ).rejects.toBeInstanceOf(PluggyBillsFetchError);
+  });
+
+  it("nao chama console.log/warn/error mesmo quando a Pluggy falha de verdade", async () => {
+    process.env.CLIENT_ID = FAKE_CLIENT_ID;
+    process.env.CLIENT_SECRET = FAKE_CLIENT_SECRET;
+    fetchCreditCardBillsMock.mockRejectedValueOnce(new Error("boom"));
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { fetchPluggyBills } = await import("@/lib/pluggy");
+    await fetchPluggyBills(FAKE_PLUGGY_CREDIT_ACCOUNT_ID).catch(() => undefined);
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();

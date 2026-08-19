@@ -45,6 +45,21 @@
 // - `Transaction.categoryFromRule String?` - NULLABLE (DT-013: a tabela ja
 //   tem 432 linhas reais; alem disso, correto por natureza - nem toda
 //   transacao casa com uma regra).
+//
+// TASK-011 (Fatura do cartao, fecha a Fase 5):
+// - Novo model `CreditCardBill` - resumo da fatura fechada (pluggyBillId,
+//   dueDate, totalAmount, minimumPaymentAmount), tabela nova (DT-013 nao se
+//   aplica - nao ha coluna adicionada a tabela existente).
+// - Account ganha `creditCardBills CreditCardBill[]` (lado inverso da
+//   relacao).
+// - `onDelete: Cascade` na relacao `CreditCardBill.account` (decisao
+//   registrada em tests/unit/schema/credit-card-bill.test.ts e
+//   TASK-011.md secao 5): diferente de `Transaction.account` (Restrict -
+//   preserva o historico financeiro primario, DT-002/TASK-002),
+//   `CreditCardBill` e um resumo DERIVADO que a Pluggy recalcula a cada
+//   re-sync - nao e a fonte de verdade dos movimentos de dinheiro do
+//   usuario. Bloquear a exclusao de uma Account por causa de faturas-resumo
+//   seria inconsistente (mesmo espirito de Account.bankItem, ja Cascade).
 
 generator client {
   provider = "prisma-client-js"
@@ -74,6 +89,7 @@ model Account {
   type            String
   balance         Decimal? @db.Decimal(14, 2)
   transactions    Transaction[]
+  creditCardBills CreditCardBill[]
 }
 
 model Transaction {
@@ -105,6 +121,16 @@ model CategoryRule {
   label        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model CreditCardBill {
+  id                   String   @id @default(cuid())
+  pluggyBillId         String   @unique
+  accountId            String
+  account              Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  dueDate              DateTime
+  totalAmount          Decimal  @db.Decimal(14, 2)
+  minimumPaymentAmount Decimal? @db.Decimal(14, 2)
 }
 
 model RecurringBill {

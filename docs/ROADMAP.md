@@ -56,7 +56,7 @@
 | Task | Título | Status |
 |---|---|---|
 | [TASK-010](./tasks/TASK-010.md) | Dashboard: gastos por categoria + resumo do mês (DT-018) | CONCLUÍDA |
-| [TASK-011](./tasks/TASK-011.md) | Fatura do cartão (fecha a Fase 5) | EM ANDAMENTO |
+| [TASK-011](./tasks/TASK-011.md) | Fatura do cartão (fecha a Fase 5) | CONCLUÍDA |
 
 ## Fase 6 — Refinos
 **Critério de pronto:** sync automático confiável.

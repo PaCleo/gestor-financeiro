@@ -100,6 +100,8 @@ const {
   transactionUpsertMock,
   fetchPluggyAccountsMock,
   fetchPluggyAllTransactionsMock,
+  fetchPluggyBillsMock,
+  syncCreditCardBillsMock,
   listActiveBankItemsMock,
   getCategoryRuleHashMapMock,
 } = vi.hoisted(() => ({
@@ -109,6 +111,13 @@ const {
   transactionUpsertMock: vi.fn(),
   fetchPluggyAccountsMock: vi.fn(),
   fetchPluggyAllTransactionsMock: vi.fn(),
+  // TASK-011 (Fatura do cartao, fecha a Fase 5): `syncBankItem` passa a
+  // buscar faturas (`fetchPluggyBills`, `@/lib/pluggy`) e persisti-las
+  // (`syncCreditCardBills`, `@/lib/bills`) SO para contas CREDIT - mockados
+  // inteiramente, mesmo padrao de `fetchPluggyAccounts`/
+  // `fetchPluggyAllTransactions` neste arquivo (DT-004).
+  fetchPluggyBillsMock: vi.fn(),
+  syncCreditCardBillsMock: vi.fn(),
   listActiveBankItemsMock: vi.fn(),
   // TASK-008 (DT-019): `syncBankItem` passa a resolver `categoryFromRule`
   // buscando o mapa hash->categoria de `@/lib/category-rules`
@@ -135,6 +144,11 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/pluggy", () => ({
   fetchPluggyAccounts: fetchPluggyAccountsMock,
   fetchPluggyAllTransactions: fetchPluggyAllTransactionsMock,
+  fetchPluggyBills: fetchPluggyBillsMock,
+}));
+
+vi.mock("@/lib/bills", () => ({
+  syncCreditCardBills: syncCreditCardBillsMock,
 }));
 
 vi.mock("@/lib/bank-item", () => ({
@@ -200,6 +214,13 @@ beforeEach(() => {
   // `syncBankItem`, ja que um mock sem implementacao devolve `undefined`
   // (nao uma Promise<Map> resolvida).
   getCategoryRuleHashMapMock.mockResolvedValue(new Map());
+  // TASK-011: MESMO motivo acima, agora para fetchPluggyBills/
+  // syncCreditCardBills - default seguro (nenhuma fatura) para os testes
+  // JA EXISTENTES (TASK-006/007/008) que usam contas CREDIT mas nao se
+  // importam com fatura, para nao quebrarem quando o coder passar a chamar
+  // fetchPluggyBills para toda conta CREDIT dentro de syncBankItem.
+  fetchPluggyBillsMock.mockResolvedValue([]);
+  syncCreditCardBillsMock.mockResolvedValue(0);
 });
 
 afterEach(() => {
@@ -467,6 +488,159 @@ describe("syncBankItem - fluxo feliz: accounts e transactions em serie (Criterio
 
     expect(firstAccountUpsertOrder).toBeLessThan(firstAccountTxFetchOrder);
     expect(firstAccountTxFetchOrder).toBeLessThan(secondAccountUpsertOrder);
+  });
+});
+
+/**
+ * TASK-011 (Fatura do cartao, fecha a Fase 5) - o sync de faturas dentro de
+ * `syncBankItem`. Contrato assumido (definido pelo qa nesta task - o coder
+ * implementa exatamente assim, ver secao 5 do TASK-011.md):
+ *
+ *   Para CADA account retornada por `fetchPluggyAccounts`, EM SERIE, DEPOIS
+ *   de sincronizar as transactions daquela conta:
+ *     - se `rawAccount.type === "CREDIT"`: chama
+ *       `fetchPluggyBills(rawAccount.pluggyAccountId)` (de `@/lib/pluggy`) e
+ *       repassa o resultado para `syncCreditCardBills(account.id, rawBills)`
+ *       (de `@/lib/bills` - `account.id` e o id INTERNO, ja upsertado, nao o
+ *       `pluggyAccountId`);
+ *     - se `rawAccount.type === "BANK"` (ou qualquer valor diferente de
+ *       "CREDIT"): NUNCA chama `fetchPluggyBills` nem `syncCreditCardBills`
+ *       para aquela conta (Criterio de aceite #5).
+ *
+ *   O retorno de `syncBankItem` NAO muda (continua
+ *   `{ bankItemId, accountsSynced, transactionsSynced }`) - a contagem de
+ *   faturas sincronizadas nao e exposta no retorno desta funcao.
+ */
+describe("syncBankItem - faturas do cartao, SO para contas CREDIT (Criterio de aceite #3/#5 da TASK-011)", () => {
+  it("conta CREDIT: busca as faturas e persiste via syncCreditCardBills com o id INTERNO da account e os rawBills recebidos", async () => {
+    findUniqueMock.mockResolvedValueOnce(buildMockBankItemRow());
+    fetchPluggyAccountsMock.mockResolvedValueOnce([
+      buildSyncAccount({ pluggyAccountId: "acc-credit-bill", type: "CREDIT", subtype: "CREDIT_CARD" }),
+    ]);
+    accountUpsertMock.mockResolvedValueOnce({ id: "internal-credit-account" });
+    fetchPluggyAllTransactionsMock.mockResolvedValueOnce([]);
+    const rawBills = [
+      {
+        pluggyBillId: "bill-1",
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: 3408.84,
+        minimumPaymentAmount: 511.32,
+      },
+    ];
+    fetchPluggyBillsMock.mockResolvedValueOnce(rawBills);
+    updateMock.mockResolvedValueOnce(buildMockBankItemRow());
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(BANK_ITEM_ID);
+
+    expect(fetchPluggyBillsMock).toHaveBeenCalledTimes(1);
+    expect(fetchPluggyBillsMock).toHaveBeenCalledWith("acc-credit-bill");
+    expect(syncCreditCardBillsMock).toHaveBeenCalledTimes(1);
+    expect(syncCreditCardBillsMock).toHaveBeenCalledWith(
+      "internal-credit-account",
+      rawBills,
+    );
+  });
+
+  it("conta BANK: NUNCA chama fetchPluggyBills nem syncCreditCardBills", async () => {
+    findUniqueMock.mockResolvedValueOnce(buildMockBankItemRow());
+    fetchPluggyAccountsMock.mockResolvedValueOnce([
+      buildSyncAccount({ pluggyAccountId: "acc-checking-no-bill", type: "BANK", subtype: "CHECKING_ACCOUNT" }),
+    ]);
+    accountUpsertMock.mockResolvedValueOnce({ id: "internal-checking-account" });
+    fetchPluggyAllTransactionsMock.mockResolvedValueOnce([]);
+    updateMock.mockResolvedValueOnce(buildMockBankItemRow());
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(BANK_ITEM_ID);
+
+    expect(fetchPluggyBillsMock).not.toHaveBeenCalled();
+    expect(syncCreditCardBillsMock).not.toHaveBeenCalled();
+  });
+
+  it("cartao sem faturas (fetchPluggyBills devolve []) nao quebra - syncCreditCardBills e chamado com array vazio", async () => {
+    findUniqueMock.mockResolvedValueOnce(buildMockBankItemRow());
+    fetchPluggyAccountsMock.mockResolvedValueOnce([
+      buildSyncAccount({ pluggyAccountId: "acc-credit-sem-fatura", type: "CREDIT", subtype: "CREDIT_CARD" }),
+    ]);
+    accountUpsertMock.mockResolvedValueOnce({ id: "internal-credit-sem-fatura" });
+    fetchPluggyAllTransactionsMock.mockResolvedValueOnce([]);
+    fetchPluggyBillsMock.mockResolvedValueOnce([]);
+    updateMock.mockResolvedValueOnce(buildMockBankItemRow());
+
+    const { syncBankItem } = await import("@/lib/sync");
+    const result = await syncBankItem(BANK_ITEM_ID);
+
+    expect(syncCreditCardBillsMock).toHaveBeenCalledWith(
+      "internal-credit-sem-fatura",
+      [],
+    );
+    // o retorno de syncBankItem nao muda (Criterio: sem contagem de faturas
+    // exposta) e o sync termina com sucesso, sem lancar.
+    expect(result).toEqual({
+      bankItemId: BANK_ITEM_ID,
+      accountsSynced: 1,
+      transactionsSynced: 0,
+    });
+  });
+
+  it("BankItem arquivado: faturas NUNCA sao buscadas (ja ignorado no nivel do Item, mesma guarda de fetchPluggyAccounts)", async () => {
+    findUniqueMock.mockResolvedValueOnce(
+      buildMockBankItemRow({ archivedAt: new Date("2026-01-01T00:00:00.000Z") }),
+    );
+
+    const { syncBankItem, BankItemArchivedError } = await import(
+      "@/lib/sync"
+    );
+
+    await expect(syncBankItem(BANK_ITEM_ID)).rejects.toBeInstanceOf(
+      BankItemArchivedError,
+    );
+    expect(fetchPluggyBillsMock).not.toHaveBeenCalled();
+    expect(syncCreditCardBillsMock).not.toHaveBeenCalled();
+  });
+
+  it("varias contas CREDIT sao processadas EM SERIE (a busca de fatura da segunda so comeca depois da primeira terminar, ADR 7)", async () => {
+    findUniqueMock.mockResolvedValueOnce(buildMockBankItemRow());
+    fetchPluggyAccountsMock.mockResolvedValueOnce([
+      buildSyncAccount({ pluggyAccountId: "acc-credit-1", type: "CREDIT", subtype: "CREDIT_CARD" }),
+      buildSyncAccount({ pluggyAccountId: "acc-credit-2", type: "CREDIT", subtype: "CREDIT_CARD" }),
+    ]);
+    accountUpsertMock
+      .mockResolvedValueOnce({ id: "internal-credit-1" })
+      .mockResolvedValueOnce({ id: "internal-credit-2" });
+    fetchPluggyAllTransactionsMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    fetchPluggyBillsMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    updateMock.mockResolvedValueOnce(buildMockBankItemRow());
+
+    const { syncBankItem } = await import("@/lib/sync");
+    await syncBankItem(BANK_ITEM_ID);
+
+    expect(fetchPluggyBillsMock).toHaveBeenCalledTimes(2);
+    const firstBillsFetchOrder = fetchPluggyBillsMock.mock.invocationCallOrder[0];
+    const secondAccountUpsertOrder = accountUpsertMock.mock.invocationCallOrder[1];
+    expect(firstBillsFetchOrder).toBeLessThan(secondAccountUpsertOrder);
+  });
+
+  it("falha ao buscar faturas (Pluggy fora do ar) propaga o erro - syncBankItem rejeita, lastSyncAt NAO e atualizado", async () => {
+    findUniqueMock.mockResolvedValueOnce(buildMockBankItemRow());
+    fetchPluggyAccountsMock.mockResolvedValueOnce([
+      buildSyncAccount({ pluggyAccountId: "acc-credit-falha", type: "CREDIT", subtype: "CREDIT_CARD" }),
+    ]);
+    accountUpsertMock.mockResolvedValueOnce({ id: "internal-credit-falha" });
+    fetchPluggyAllTransactionsMock.mockResolvedValueOnce([]);
+    fetchPluggyBillsMock.mockRejectedValueOnce(
+      new Error("PluggyBillsFetchError simulado"),
+    );
+
+    const { syncBankItem } = await import("@/lib/sync");
+
+    await expect(syncBankItem(BANK_ITEM_ID)).rejects.toThrow();
+    expect(updateMock).not.toHaveBeenCalled();
   });
 });
 
