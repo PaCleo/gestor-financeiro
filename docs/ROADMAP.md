@@ -58,9 +58,10 @@
 | [TASK-010](./tasks/TASK-010.md) | Dashboard: gastos por categoria + resumo do mês (DT-018) | CONCLUÍDA |
 | [TASK-011](./tasks/TASK-011.md) | Fatura do cartão (fecha a Fase 5) | CONCLUÍDA |
 
-## Fase 6 — Refinos
-**Critério de pronto:** sync automático confiável.
+## Fase 6 — Refinos & usabilidade
+**Critério de pronto:** sync automático confiável; app navegável.
 
 | Task | Título | Status |
 |---|---|---|
+| [TASK-012](./tasks/TASK-012.md) | Navegação entre as telas | EM ANDAMENTO |
 | — | Webhooks, conciliação manual↔Pluggy, tratamento de expiração de consentimento | PENDENTE |
