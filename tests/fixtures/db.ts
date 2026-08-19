@@ -97,6 +97,26 @@ export function buildTransaction(
 }
 
 /**
+ * TASK-009 (Lancamentos manuais + conta Dinheiro, Fase 3): fixture de uma
+ * Account MANUAL - `pluggyAccountId=null` E `bankItemId=null` (a definicao
+ * de "conta nao conectada" da secao 2 do TASK-009.md). Contrasta
+ * deliberadamente com `buildAccount` acima, cujo default sempre gera um
+ * `pluggyAccountId` (conta CONECTADA) e exige um `bankItemId`. Usado nos
+ * testes da prevencao por convencao (criar/editar manual so em conta nao
+ * conectada) e da conta "Dinheiro" (`type=CASH`, o default deste fixture).
+ */
+export function buildManualAccount(overrides: Record<string, unknown> = {}) {
+  return {
+    pluggyAccountId: null,
+    bankItemId: null,
+    name: "Dinheiro",
+    type: "CASH",
+    balance: undefined,
+    ...overrides,
+  };
+}
+
+/**
  * TASK-008 (DT-019): fixture de `CategoryRule`. `documentHash` aqui e SEMPRE
  * um hash ja calculado pelo proprio teste (via `hashDocument` de
  * `@/lib/category-rules` - a UNICA fonte de hash, Criterio de aceite #2) -
