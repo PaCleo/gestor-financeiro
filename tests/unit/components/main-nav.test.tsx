@@ -39,6 +39,16 @@ import { cleanup, render, screen } from "@testing-library/react";
  *     esse link (os outros 5 NAO tem o atributo `aria-current`);
  *   - nao chamar `console.log`/`console.warn`/`console.error` durante a
  *     renderizacao (Criterio de aceite #6).
+ *
+ * ADICAO (TASK-012 Parte 2 - apresentacao visual, Criterio de aceite P4):
+ * alem do `aria-current="page"` ja existente (mantido como contrato -
+ * Criterio de aceite #2 da Parte 1, intocado), o link ativo passa a
+ * carregar tambem `data-active="true"`; os outros 5 NAO tem esse atributo
+ * (mesma convencao do `aria-current`). Esse atributo e o CONTRATO
+ * TESTAVEL do "destaque visual" pedido em P4 - deliberadamente NAO se
+ * testa nenhuma classe Tailwind especifica (fragil a qualquer ajuste de
+ * estilo); a aparencia real (cor, peso de fonte, sublinhado etc.) e
+ * estetica e fica para verificacao manual/pelo orquestrador no app real.
  */
 
 const { usePathnameMock } = vi.hoisted(() => ({
@@ -146,5 +156,39 @@ describe("MainNav - estado ativo via usePathname, dois pathnames distintos (Crit
         "aria-current",
       );
     }
+  });
+});
+
+describe("MainNav - destaque visual do link ativo via data-active (Criterio de aceite P4, TASK-012 Parte 2)", () => {
+  it("em /bancos, SOMENTE o link 'Bancos' recebe data-active='true' (alem do aria-current ja existente)", async () => {
+    usePathnameMock.mockReturnValue("/bancos");
+    const { MainNav } = await import("@/components/nav/MainNav");
+
+    render(<MainNav />);
+
+    const activeLink = screen.getByRole("link", { name: /^bancos$/i });
+    expect(activeLink).toHaveAttribute("data-active", "true");
+    expect(activeLink).toHaveAttribute("aria-current", "page");
+
+    const others = EXPECTED_LINKS.filter((l) => l.href !== "/bancos");
+    for (const { name } of others) {
+      expect(screen.getByRole("link", { name })).not.toHaveAttribute(
+        "data-active",
+      );
+    }
+  });
+
+  it("trocar a rota move o data-active='true' de um link para outro (nao fica um segundo link 'preso' ativo)", async () => {
+    usePathnameMock.mockReturnValue("/categorias");
+    const { MainNav } = await import("@/components/nav/MainNav");
+
+    render(<MainNav />);
+
+    expect(
+      screen.getByRole("link", { name: /^categorias$/i }),
+    ).toHaveAttribute("data-active", "true");
+    expect(
+      screen.getByRole("link", { name: /^dashboard$/i }),
+    ).not.toHaveAttribute("data-active");
   });
 });
