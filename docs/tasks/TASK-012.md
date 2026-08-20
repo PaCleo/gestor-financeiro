@@ -1,5 +1,5 @@
 # TASK-012 — Navegação entre as telas + apresentação visual
-Status: EM ANDAMENTO (Parte 2) | Fase do roadmap: 6 (usabilidade)
+Status: CONCLUÍDA (Parte 1 + Parte 2) | Fase do roadmap: 6 (usabilidade)
 
 > **Parte 1 (navegação): CONCLUÍDA e aprovada** (seções 1–7). O usuário pediu para incluir a
 > apresentação visual na mesma branch/task — ver **Parte 2** ao final do arquivo.
