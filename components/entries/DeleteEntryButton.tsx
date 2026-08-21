@@ -50,21 +50,24 @@ export function DeleteEntryButton({
   }
 
   if (state === "success") {
-    return <p>Lançamento excluído com sucesso.</p>;
+    return <p className="text-sm text-[var(--pos)]">Lançamento excluído com sucesso.</p>;
   }
 
   return (
-    <div>
+    <div className="flex flex-col items-end gap-2">
       <button
         type="button"
         onClick={handleDeleteClick}
         disabled={state === "loading"}
+        className="btn-danger"
       >
         Excluir
       </button>
-      {state === "loading" && <p>Removendo...</p>}
+      {state === "loading" && <p className="hint-text">Removendo...</p>}
       {state === "error" && (
-        <p>Não foi possível remover este lançamento. Tente novamente.</p>
+        <p className="text-sm text-[var(--neg)]">
+          Não foi possível remover este lançamento. Tente novamente.
+        </p>
       )}
     </div>
   );

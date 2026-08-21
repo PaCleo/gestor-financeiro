@@ -23,33 +23,44 @@ const NAV_ITEMS: NavItem[] = [
  * nada de `lib/` - nenhum acoplamento a `lib/db`/módulos server-only (mesma
  * armadilha documentada nas TASK-009/011: um import desses arrastaria `pg`
  * para o bundle do cliente e quebraria `npm run build`).
+ *
+ * TASK-013 (sistema de design Fintech Premium): só a apresentação mudou -
+ * marca com "mark" em gradiente indigo + link ativo como pílula (classe
+ * `.app-nav-link[data-active="true"]` em `app/globals.css`). O
+ * `aria-current="page"`/`data-active="true"` do link ativo (contrato
+ * testável de tests/unit/components/main-nav.test.tsx) é mantido
+ * exatamente igual.
  */
 export function MainNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="border-b border-slate-200 bg-white">
-      <ul className="mx-auto flex max-w-5xl flex-wrap items-center gap-1 px-4 py-3 sm:gap-2">
-        {NAV_ITEMS.map((item) => {
-          const isActive = pathname === item.href;
-          return (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                aria-current={isActive ? "page" : undefined}
-                data-active={isActive ? "true" : undefined}
-                className={
-                  isActive
-                    ? "rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
-                    : "rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
-                }
-              >
-                {item.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+    <nav className="app-nav" aria-label="Navegação principal">
+      <div className="mx-auto flex w-full max-w-[1160px] flex-wrap items-center gap-2 px-4 py-3 sm:px-6">
+        <div className="mr-2 flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+          <span className="brand-mark" aria-hidden="true">
+            G
+          </span>
+          Gestor
+        </div>
+        <ul className="flex flex-wrap items-center gap-1">
+          {NAV_ITEMS.map((item) => {
+            const isActive = pathname === item.href;
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  aria-current={isActive ? "page" : undefined}
+                  data-active={isActive ? "true" : undefined}
+                  className="app-nav-link"
+                >
+                  {item.label}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </nav>
   );
 }

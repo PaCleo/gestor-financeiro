@@ -1,0 +1,283 @@
+<title>Gestor Financeiro</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  /* ---- Fintech Premium (dark, single-world commitment) ----
+     Tokens on :root, painted explicitly so the page holds on any host ground. */
+  :root {
+    --ground: #0B0F17;
+    --ground-2: #0E141E;
+    --surface: #141A24;
+    --surface-2: #171F2B;
+    --line: #222B39;
+    --line-soft: rgba(255,255,255,.055);
+    --text: #E6EAF2;
+    --text-2: #9AA6B8;
+    --text-3: #5D6982;
+    --accent: #6366F1;
+    --accent-bright: #818CF8;
+    --accent-dim: rgba(99,102,241,.14);
+    --pos: #34D399;
+    --pos-dim: rgba(52,211,153,.12);
+    --neg: #FB7185;
+    --neg-dim: rgba(251,113,133,.12);
+    --warn: #FBBF24;
+    --radius: 16px;
+    --radius-sm: 10px;
+    --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-num: ui-monospace, "SF Mono", "JetBrains Mono", "Roboto Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--font-ui);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    /* ambient glow, futuristic but faint so it never fights the data */
+    background-image:
+      radial-gradient(900px 480px at 78% -8%, rgba(99,102,241,.16), transparent 60%),
+      radial-gradient(700px 420px at 8% 4%, rgba(52,211,153,.06), transparent 55%);
+    background-attachment: fixed;
+  }
+  .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .pos { color: var(--pos); }
+  .neg { color: var(--neg); }
+
+  /* ---------- top nav ---------- */
+  .nav {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 22px;
+    padding: 14px 26px;
+    background: rgba(11,15,23,.72);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -.01em; }
+  .brand .mark {
+    width: 26px; height: 26px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent-bright), var(--accent));
+    box-shadow: 0 0 0 1px rgba(129,140,248,.4), 0 6px 18px -6px rgba(99,102,241,.7);
+    display: grid; place-items: center; color: #fff; font-size: 14px; font-weight: 800;
+  }
+  .nav-links { display: flex; gap: 4px; margin-left: 6px; flex-wrap: wrap; }
+  .nav-links a {
+    text-decoration: none; color: var(--text-2);
+    font-size: 13.5px; font-weight: 500;
+    padding: 7px 13px; border-radius: 9px;
+    transition: color .15s, background .15s;
+  }
+  .nav-links a:hover { color: var(--text); background: rgba(255,255,255,.04); }
+  .nav-links a.active {
+    color: #fff;
+    background: linear-gradient(180deg, rgba(129,140,248,.25), rgba(99,102,241,.16));
+    box-shadow: inset 0 0 0 1px rgba(129,140,248,.35);
+  }
+  .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .month-pill {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 13px; border-radius: 10px;
+    background: var(--surface); border: 1px solid var(--line);
+    font-size: 13px; color: var(--text-2);
+  }
+  .month-pill b { color: var(--text); font-weight: 600; }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: linear-gradient(135deg, #2b3446, #1a2130);
+    border: 1px solid var(--line); display: grid; place-items: center;
+    font-size: 12px; color: var(--text-2); font-weight: 600;
+  }
+
+  /* ---------- layout ---------- */
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 30px 26px 64px; }
+  .page-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
+  .page-head h1 { margin: 0; font-size: 26px; font-weight: 680; letter-spacing: -.02em; }
+  .page-head p { margin: 4px 0 0; color: var(--text-3); font-size: 13.5px; }
+  .eyebrow { text-transform: uppercase; letter-spacing: .14em; font-size: 11px; color: var(--text-3); font-weight: 600; }
+
+  .grid { display: grid; gap: 16px; }
+  .kpis { grid-template-columns: repeat(3, 1fr); margin-bottom: 16px; }
+  .cols { grid-template-columns: 1.35fr 1fr; align-items: start; }
+  @media (max-width: 820px) { .kpis { grid-template-columns: 1fr; } .cols { grid-template-columns: 1fr; } }
+
+  .card {
+    background: linear-gradient(180deg, var(--surface-2), var(--surface));
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px;
+    position: relative;
+    box-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 20px 40px -30px rgba(0,0,0,.9);
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .card-head h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: .01em; color: var(--text); }
+
+  /* KPI card */
+  .kpi .label { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: 13px; font-weight: 500; }
+  .kpi .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .kpi .value { margin-top: 12px; font-size: 30px; font-weight: 600; letter-spacing: -.03em; }
+  .kpi .sub { margin-top: 8px; font-size: 12.5px; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
+  .trend { font-size: 11.5px; font-weight: 600; padding: 2px 7px; border-radius: 999px; }
+  .trend.up { color: var(--pos); background: var(--pos-dim); }
+  .trend.down { color: var(--neg); background: var(--neg-dim); }
+
+  /* category bars */
+  .cat { display: flex; flex-direction: column; gap: 15px; }
+  .cat-row { display: grid; grid-template-columns: 128px 1fr auto; align-items: center; gap: 14px; }
+  .cat-row .name { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .track { height: 9px; border-radius: 999px; background: rgba(255,255,255,.045); overflow: hidden; }
+  .fill {
+    height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-bright));
+    box-shadow: 0 0 12px -2px rgba(99,102,241,.6);
+  }
+  .cat-row .amt { font-size: 13px; color: var(--text-2); min-width: 78px; text-align: right; }
+
+  /* fatura card */
+  .bill-amount { font-size: 30px; font-weight: 600; letter-spacing: -.03em; margin-top: 2px; }
+  .bill-meta { display: flex; gap: 22px; margin-top: 16px; }
+  .bill-meta .m .k { font-size: 11.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .08em; }
+  .bill-meta .m .v { font-size: 15px; margin-top: 3px; }
+  .limit { margin-top: 18px; }
+  .limit .track { height: 7px; }
+  .limit .fill-warn { background: linear-gradient(90deg, #a78bfa, #f0abfc); box-shadow: none; }
+  .limit .row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-3); margin-top: 8px; }
+
+  .divider { height: 1px; background: var(--line-soft); margin: 4px 0 0; }
+
+  /* transactions table */
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); font-weight: 600; padding: 0 12px 12px; }
+  th.right, td.right { text-align: right; }
+  td { padding: 12px; border-top: 1px solid var(--line-soft); font-size: 13.5px; }
+  tr td:first-child { color: var(--text-2); }
+  .desc { color: var(--text); font-weight: 500; }
+  .chip {
+    display: inline-block; font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
+    background: var(--accent-dim); color: var(--accent-bright);
+    border: 1px solid rgba(99,102,241,.22);
+  }
+  .chip.muted { background: rgba(255,255,255,.04); color: var(--text-2); border-color: var(--line); }
+  .pill { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
+  .pill.posted { color: var(--pos); background: var(--pos-dim); }
+  .pill.pending { color: var(--warn); background: rgba(251,191,36,.12); }
+  .note { margin-top: 14px; font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 7px; }
+
+  .foot { max-width: 1160px; margin: 0 auto; padding: 0 26px 40px; color: var(--text-3); font-size: 12.5px; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .fill, .fill-warn { animation: grow .9s cubic-bezier(.2,.7,.2,1) both; }
+    .card { animation: rise .5s ease both; }
+    .card:nth-child(2){ animation-delay:.04s } .card:nth-child(3){ animation-delay:.08s }
+    @keyframes grow { from { width: 0 !important; } }
+    @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+  }
+</style>
+
+<nav class="nav">
+  <div class="brand"><span class="mark">₲</span> Gestor</div>
+  <div class="nav-links">
+    <a href="#" class="active">Dashboard</a>
+    <a href="#">Transações</a>
+    <a href="#">Faturas</a>
+    <a href="#">Bancos</a>
+    <a href="#">Lançamentos</a>
+    <a href="#">Categorias</a>
+  </div>
+  <div class="nav-right">
+    <div class="month-pill">Mês <b>Julho 2026</b> ▾</div>
+    <div class="avatar">LT</div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Visão do mês</div>
+      <h1>Dashboard</h1>
+      <p>Quanto entrou, quanto saiu e para onde foi — julho de 2026.</p>
+    </div>
+  </div>
+
+  <!-- KPIs -->
+  <div class="grid kpis">
+    <div class="card kpi">
+      <div class="label"><span class="dot" style="background:var(--pos)"></span> Receita</div>
+      <div class="value num pos">R$&nbsp;2.286,00</div>
+      <div class="sub"><span class="trend up">▲ 4,2%</span> vs. junho</div>
+    </div>
+    <div class="card kpi">
+      <div class="label"><span class="dot" style="background:var(--neg)"></span> Despesa</div>
+      <div class="value num">R$&nbsp;6.303,63</div>
+      <div class="sub"><span class="trend down">▲ 18,7%</span> vs. junho</div>
+    </div>
+    <div class="card kpi">
+      <div class="label"><span class="dot" style="background:var(--accent-bright)"></span> Saldo do mês</div>
+      <div class="value num neg">−R$&nbsp;4.017,63</div>
+      <div class="sub">Receita menos despesa, sem transferências</div>
+    </div>
+  </div>
+
+  <div class="grid cols">
+    <!-- gastos por categoria -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Gastos por categoria</h2>
+        <span class="eyebrow">7 categorias</span>
+      </div>
+      <div class="cat">
+        <div class="cat-row"><span class="name">Loans and financing</span><span class="track"><span class="fill" style="width:100%"></span></span><span class="amt num">R$ 3.408,84</span></div>
+        <div class="cat-row"><span class="name">Housing</span><span class="track"><span class="fill" style="width:53%"></span></span><span class="amt num">R$ 1.806,01</span></div>
+        <div class="cat-row"><span class="name">Groceries</span><span class="track"><span class="fill" style="width:33%"></span></span><span class="amt num">R$ 1.111,95</span></div>
+        <div class="cat-row"><span class="name">Online shopping</span><span class="track"><span class="fill" style="width:23%"></span></span><span class="amt num">R$ 783,00</span></div>
+        <div class="cat-row"><span class="name">Transportation</span><span class="track"><span class="fill" style="width:16%"></span></span><span class="amt num">R$ 543,65</span></div>
+        <div class="cat-row"><span class="name">Health</span><span class="track"><span class="fill" style="width:9%"></span></span><span class="amt num">R$ 300,00</span></div>
+      </div>
+      <div class="divider" style="margin:18px 0 0"></div>
+      <div class="note">◇ 4 transferências e pagamentos de fatura (R$ 3.454,80) foram excluídos do cálculo.</div>
+    </div>
+
+    <!-- fatura -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Fatura — Mastercard Gold</h2>
+        <span class="chip muted">final 4487</span>
+      </div>
+      <div class="eyebrow">Fatura atual</div>
+      <div class="bill-amount num">R$&nbsp;3.408,84</div>
+      <div class="bill-meta">
+        <div class="m"><div class="k">Vencimento</div><div class="v num">10/08/2026</div></div>
+        <div class="m"><div class="k">Mínimo</div><div class="v num">R$ 511,32</div></div>
+      </div>
+      <div class="limit">
+        <div class="track"><span class="fill fill-warn" style="width:32%"></span></div>
+        <div class="row"><span>Limite usado</span><span class="num">R$ 3.408 / R$ 10.800</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- transações recentes -->
+  <div class="card" style="margin-top:16px">
+    <div class="card-head">
+      <h2>Transações recentes</h2>
+      <span class="eyebrow">ver todas →</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Método</th><th class="right">Valor</th><th class="right">Status</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">18/07</td><td class="desc">Supermercado Pão de Açúcar</td><td><span class="chip">Groceries</span></td><td>Crédito</td><td class="right num neg">−R$ 342,18</td><td class="right"><span class="pill pending">Pendente</span></td></tr>
+          <tr><td class="num">17/07</td><td class="desc">Transferência recebida</td><td><span class="chip muted">Non-recurring income</span></td><td>Pix</td><td class="right num pos">+R$ 2.286,00</td><td class="right"><span class="pill posted">Compensado</span></td></tr>
+          <tr><td class="num">15/07</td><td class="desc">Aluguel</td><td><span class="chip">Housing</span></td><td>Boleto</td><td class="right num neg">−R$ 1.806,01</td><td class="right"><span class="pill posted">Compensado</span></td></tr>
+          <tr><td class="num">14/07</td><td class="desc">Posto Shell</td><td><span class="chip">Transportation</span></td><td>Débito</td><td class="right num neg">−R$ 210,40</td><td class="right"><span class="pill posted">Compensado</span></td></tr>
+          <tr><td class="num">12/07</td><td class="desc">Dinheiro — feira</td><td><span class="chip muted">Sem categoria</span></td><td>Dinheiro</td><td class="right num neg">−R$ 85,00</td><td class="right"><span class="pill posted">Manual</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="foot">Mockup de direção visual — <b>Fintech Premium</b>. Dados ilustrativos baseados no seu extrato real. Nada aqui está no app ainda: é a proposta para você aprovar.</div>

@@ -35,6 +35,13 @@ import { cleanup, render, screen, within } from "@testing-library/react";
  *     fatura EM DESTAQUE, dentro de um container com
  *     `data-testid="current-bill-<accountId>"`; se `minimumPaymentAmount`
  *     for `null`, mostra um placeholder (nunca a string "null");
+ *
+ * ATUALIZACAO DELIBERADA (TASK-013 - consistencia visual, moeda em R$ em
+ * todas as telas): `totalAmount`/`minimumPaymentAmount` passam a ser
+ * exibidos FORMATADOS via `formatBRL` (`lib/format.ts`, mesmo helper puro
+ * ja usado por app/dashboard/page.tsx desde TASK-012 Parte 2 e por
+ * app/transacoes/page.tsx desde TASK-013) em vez do valor cru do Decimal
+ * (`"3408.84"`).
  *   - se `card.current` for `null` (cartao sem NENHUMA fatura): mostra um
  *     estado vazio claro para aquele cartao, SEM lancar erro;
  *   - `card.history` vira uma lista de itens com
@@ -105,8 +112,16 @@ describe("app/faturas/page.tsx - fatura atual em destaque (Criterio de aceite #7
     const card = screen.getByTestId("card-acc-1");
     expect(within(card).getByText("Cartao Black")).toBeInTheDocument();
     const current = within(card).getByTestId("current-bill-acc-1");
-    expect(current.textContent).toContain("3408.84");
-    expect(current.textContent).toContain("511.32");
+    // toHaveTextContent normaliza espacos (inclusive o NBSP que o Intl
+    // pt-BR/BRL pode inserir entre "R$" e o numero) antes de comparar -
+    // mesma tecnica de tests/unit/app/dashboard-page.test.tsx (TASK-012
+    // Parte 2).
+    expect(current).toHaveTextContent("R$ 3.408,84");
+    expect(current).toHaveTextContent("R$ 511,32");
+    // Prova que NAO e mais o valor cru: "3408.84"/"511.32" (com ponto) nao
+    // aparecem mais no texto.
+    expect(current.textContent).not.toContain("3408.84");
+    expect(current.textContent).not.toContain("511.32");
     expect(current.textContent).toContain("2026-08-10");
   });
 
@@ -212,7 +227,15 @@ describe("app/faturas/page.tsx - varios cartoes (secao 2, 'histórico por cartã
     const cardB = screen.getByTestId("card-acc-2");
     expect(within(cardA).getByText("Cartao A")).toBeInTheDocument();
     expect(within(cardB).getByText("Cartao B")).toBeInTheDocument();
-    expect(within(cardA).getByTestId("current-bill-acc-1").textContent).toContain("100.00");
-    expect(within(cardB).getByTestId("current-bill-acc-2").textContent).toContain("200.00");
+    expect(within(cardA).getByTestId("current-bill-acc-1")).toHaveTextContent("R$ 100,00");
+    expect(within(cardB).getByTestId("current-bill-acc-2")).toHaveTextContent("R$ 200,00");
+    // Prova que NAO e mais o valor cru: "100.00"/"200.00" (com ponto) nao
+    // aparecem mais no texto.
+    expect(within(cardA).getByTestId("current-bill-acc-1").textContent).not.toContain(
+      "100.00",
+    );
+    expect(within(cardB).getByTestId("current-bill-acc-2").textContent).not.toContain(
+      "200.00",
+    );
   });
 });

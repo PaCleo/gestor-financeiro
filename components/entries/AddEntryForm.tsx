@@ -84,108 +84,123 @@ export function AddEntryForm({
   }
 
   return (
-    <form aria-label="Adicionar lancamento" onSubmit={handleSubmit}>
-      <div>
-        <label htmlFor="entry-amount">Valor</label>
-        <input
-          id="entry-amount"
-          type="number"
-          step="0.01"
-          min="0"
-          value={amount}
-          onChange={(event) => setAmount(event.target.value)}
-          required
-        />
+    <form aria-label="Adicionar lancamento" onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="entry-amount" className="field-label">Valor</label>
+          <input
+            id="entry-amount"
+            type="number"
+            step="0.01"
+            min="0"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            required
+            className="field-input num"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="entry-direction" className="field-label">Direção</label>
+          <select
+            id="entry-direction"
+            value={direction}
+            onChange={(event) =>
+              setDirection(event.target.value as EntryDirection)
+            }
+            className="field-select"
+          >
+            {ENTRY_DIRECTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option === "saida" ? "Saída" : "Entrada"}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="entry-date" className="field-label">Data</label>
+          <input
+            id="entry-date"
+            type="date"
+            value={date}
+            onChange={(event) => setDate(event.target.value)}
+            required
+            className="field-input"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="entry-description" className="field-label">Descrição</label>
+          <input
+            id="entry-description"
+            type="text"
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            required
+            className="field-input"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="entry-method" className="field-label">Método</label>
+          <select
+            id="entry-method"
+            value={method}
+            onChange={(event) => setMethod(event.target.value as EntryMethod)}
+            className="field-select"
+          >
+            {ENTRY_METHODS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="entry-category" className="field-label">Categoria</label>
+          <input
+            id="entry-category"
+            type="text"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+            className="field-input"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor="entry-account" className="field-label">Conta</label>
+          <select
+            id="entry-account"
+            value={accountId}
+            onChange={(event) => setAccountId(event.target.value)}
+            className="field-select"
+          >
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      <div>
-        <label htmlFor="entry-direction">Direção</label>
-        <select
-          id="entry-direction"
-          value={direction}
-          onChange={(event) =>
-            setDirection(event.target.value as EntryDirection)
-          }
-        >
-          {ENTRY_DIRECTIONS.map((option) => (
-            <option key={option} value={option}>
-              {option === "saida" ? "Saída" : "Entrada"}
-            </option>
-          ))}
-        </select>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="submit" disabled={state === "saving"} className="btn-primary">
+          Adicionar lançamento
+        </button>
+
+        {state === "saving" && <p className="hint-text">Salvando...</p>}
+        {state === "success" && (
+          <p className="text-sm text-[var(--pos)]">Lançamento adicionado com sucesso.</p>
+        )}
+        {state === "error" && (
+          <p className="text-sm text-[var(--neg)]">
+            Não foi possível salvar o lançamento. Tente novamente.
+          </p>
+        )}
       </div>
-
-      <div>
-        <label htmlFor="entry-date">Data</label>
-        <input
-          id="entry-date"
-          type="date"
-          value={date}
-          onChange={(event) => setDate(event.target.value)}
-          required
-        />
-      </div>
-
-      <div>
-        <label htmlFor="entry-description">Descrição</label>
-        <input
-          id="entry-description"
-          type="text"
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          required
-        />
-      </div>
-
-      <div>
-        <label htmlFor="entry-method">Método</label>
-        <select
-          id="entry-method"
-          value={method}
-          onChange={(event) => setMethod(event.target.value as EntryMethod)}
-        >
-          {ENTRY_METHODS.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
-        <label htmlFor="entry-category">Categoria</label>
-        <input
-          id="entry-category"
-          type="text"
-          value={category}
-          onChange={(event) => setCategory(event.target.value)}
-        />
-      </div>
-
-      <div>
-        <label htmlFor="entry-account">Conta</label>
-        <select
-          id="entry-account"
-          value={accountId}
-          onChange={(event) => setAccountId(event.target.value)}
-        >
-          {accounts.map((account) => (
-            <option key={account.id} value={account.id}>
-              {account.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <button type="submit" disabled={state === "saving"}>
-        Adicionar lançamento
-      </button>
-
-      {state === "saving" && <p>Salvando...</p>}
-      {state === "success" && <p>Lançamento adicionado com sucesso.</p>}
-      {state === "error" && (
-        <p>Não foi possível salvar o lançamento. Tente novamente.</p>
-      )}
     </form>
   );
 }

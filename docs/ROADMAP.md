@@ -64,4 +64,5 @@
 | Task | Título | Status |
 |---|---|---|
 | [TASK-012](./tasks/TASK-012.md) | Navegação entre as telas | CONCLUÍDA |
+| [TASK-013](./tasks/TASK-013.md) | Sistema de design Fintech Premium (todas as telas) | CONCLUÍDA |
 | — | Webhooks, conciliação manual↔Pluggy, tratamento de expiração de consentimento | PENDENTE |

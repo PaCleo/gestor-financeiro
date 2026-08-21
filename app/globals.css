@@ -1,26 +1,429 @@
 @import "tailwindcss";
 
+/*
+ * TASK-013 - Sistema de design "Fintech Premium" (escuro, dark-only).
+ * Tokens e primitivos extraidos pixel a pixel de
+ * `docs/design/mockup-fintech-premium.html` (mockup aprovado pelo usuario).
+ *
+ * Dark-only por decisao deliberada da task: o scaffold original alternava
+ * `--background`/`--foreground` via `prefers-color-scheme`. Este bloco
+ * substitui isso - o `body` e pintado explicitamente com `--ground`, sem
+ * depender do tema do SO.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ground: #0b0f17;
+  --ground-2: #0e141e;
+  --surface: #141a24;
+  --surface-2: #171f2b;
+  --line: #222b39;
+  --line-soft: rgba(255, 255, 255, 0.055);
+  --text: #e6eaf2;
+  --text-2: #9aa6b8;
+  --text-3: #5d6982;
+  --accent: #6366f1;
+  --accent-bright: #818cf8;
+  --accent-dim: rgba(99, 102, 241, 0.14);
+  --pos: #34d399;
+  --pos-dim: rgba(52, 211, 153, 0.12);
+  --neg: #fb7185;
+  --neg-dim: rgba(251, 113, 133, 0.12);
+  --warn: #fbbf24;
+  --warn-dim: rgba(251, 191, 36, 0.12);
+  --radius: 16px;
+  --radius-sm: 10px;
+  --font-num: ui-monospace, "SF Mono", "JetBrains Mono", "Roboto Mono", Menlo,
+    monospace;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--ground);
+  --color-foreground: var(--text);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--ground);
+  color: var(--text);
+  /* Glow radial indigo bem fraco no topo - nao pode competir com os dados. */
+  background-image: radial-gradient(
+      900px 480px at 78% -8%,
+      rgba(99, 102, 241, 0.16),
+      transparent 60%
+    ),
+    radial-gradient(700px 420px at 8% 4%, rgba(52, 211, 153, 0.06), transparent 55%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+@layer components {
+  /* ---------- numeros ---------- */
+  .num {
+    font-family: var(--font-num);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  /* ---------- layout de pagina ---------- */
+  .page-shell {
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 30px 20px 64px;
+    width: 100%;
+  }
+  @media (min-width: 640px) {
+    .page-shell {
+      padding: 30px 26px 64px;
+    }
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 680;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  @media (min-width: 640px) {
+    .page-head h1 {
+      font-size: 26px;
+    }
+  }
+  .page-head p {
+    margin: 4px 0 0;
+    color: var(--text-3);
+    font-size: 13.5px;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 11px;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+
+  /* ---------- nav ---------- */
+  .app-nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: rgba(11, 15, 23, 0.72);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .brand-mark {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent-bright), var(--accent));
+    box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.4),
+      0 6px 18px -6px rgba(99, 102, 241, 0.7);
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 800;
+    flex-shrink: 0;
+  }
+  .app-nav-link {
+    text-decoration: none;
+    color: var(--text-2);
+    font-size: 13.5px;
+    font-weight: 500;
+    padding: 7px 13px;
+    border-radius: 9px;
+    transition: color 0.15s, background 0.15s;
+    display: inline-block;
+  }
+  .app-nav-link:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .app-nav-link[data-active="true"] {
+    color: #fff;
+    background: linear-gradient(
+      180deg,
+      rgba(129, 140, 248, 0.25),
+      rgba(99, 102, 241, 0.16)
+    );
+    box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.35);
+  }
+
+  /* ---------- card ---------- */
+  .card {
+    background: linear-gradient(180deg, var(--surface-2), var(--surface));
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset,
+      0 20px 40px -30px rgba(0, 0, 0, 0.9);
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .card-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text);
+  }
+  .divider {
+    height: 1px;
+    background: var(--line-soft);
+    margin: 16px 0 0;
+  }
+
+  /* ---------- kpi ---------- */
+  .kpi-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-2);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .kpi-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .kpi-value {
+    margin-top: 12px;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    color: var(--text);
+  }
+  @media (min-width: 640px) {
+    .kpi-value {
+      font-size: 30px;
+    }
+  }
+  .kpi-sub {
+    margin-top: 8px;
+    font-size: 12.5px;
+    color: var(--text-3);
+  }
+
+  /* ---------- barra de categoria ---------- */
+  .cat-row {
+    display: grid;
+    grid-template-columns: minmax(96px, 160px) 1fr auto;
+    align-items: center;
+    gap: 14px;
+  }
+  .cat-name {
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cat-amt {
+    font-size: 13px;
+    color: var(--text-2);
+    min-width: 70px;
+    text-align: right;
+  }
+  .track {
+    height: 9px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.045);
+    overflow: hidden;
+  }
+  .fill {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-bright));
+    box-shadow: 0 0 12px -2px rgba(99, 102, 241, 0.6);
+  }
+
+  /* ---------- fatura ---------- */
+  .bill-amount {
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    margin: 2px 0 0;
+    color: var(--text);
+  }
+  .bill-meta-label {
+    font-size: 11.5px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0;
+  }
+  .bill-meta-value {
+    font-size: 15px;
+    margin: 3px 0 0;
+    color: var(--text);
+  }
+
+  /* ---------- chips ---------- */
+  .chip {
+    display: inline-block;
+    font-size: 11.5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--accent-dim);
+    color: var(--accent-bright);
+    border: 1px solid rgba(99, 102, 241, 0.22);
+  }
+  .chip-muted {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-2);
+    border-color: var(--line);
+  }
+
+  /* ---------- pills de status ---------- */
+  .pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 999px;
+    display: inline-block;
+  }
+  .pill-posted {
+    color: var(--pos);
+    background: var(--pos-dim);
+  }
+  .pill-pending {
+    color: var(--warn);
+    background: var(--warn-dim);
+  }
+  .pill-danger {
+    color: var(--neg);
+    background: var(--neg-dim);
+  }
+  .pill-neutral {
+    color: var(--text-2);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  /* ---------- tabela ---------- */
+  .table-wrap {
+    overflow-x: auto;
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-3);
+    font-weight: 600;
+    padding: 0 12px 12px;
+    white-space: nowrap;
+  }
+  .data-table th.align-right,
+  .data-table td.align-right {
+    text-align: right;
+  }
+  .data-table td {
+    padding: 12px;
+    border-top: 1px solid var(--line-soft);
+    font-size: 13.5px;
+    color: var(--text-2);
+  }
+
+  /* ---------- controles de formulario ---------- */
+  .field-label {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text-2);
+    margin-bottom: 6px;
+  }
+  .field-input,
+  .field-select {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    font-size: 13.5px;
+    color: var(--text);
+  }
+  .field-input::placeholder {
+    color: var(--text-3);
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent-bright), var(--accent));
+    color: #fff;
+    border-color: rgba(129, 140, 248, 0.4);
+  }
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text-2);
+    border-color: var(--line);
+  }
+  .btn-secondary:hover {
+    color: var(--text);
+  }
+  .btn-danger {
+    background: var(--neg-dim);
+    color: var(--neg);
+    border-color: rgba(251, 113, 133, 0.25);
+  }
+  .btn-primary:disabled,
+  .btn-secondary:disabled,
+  .btn-danger:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .hint-text {
+    font-size: 12.5px;
+    color: var(--text-3);
+  }
+  .empty-text {
+    font-size: 13.5px;
+    color: var(--text-3);
+  }
+}
+
+/* ---------- acessibilidade: foco visivel (anel indigo) ---------- */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---------- prefers-reduced-motion ---------- */
+@media (prefers-reduced-motion: no-preference) {
+  .fill {
+    transition: width 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
 }

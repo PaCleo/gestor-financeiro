@@ -18,6 +18,12 @@ import { DeleteEntryButton } from "@/components/entries/DeleteEntryButton";
  * disponivel. Renderiza `<AddEntryForm />` e, para cada lancamento manual,
  * um `<EditEntryForm />` + `<DeleteEntryButton />`. Estado vazio quando a
  * lista e `[]`.
+ *
+ * TASK-013 (sistema de design Fintech Premium): so a apresentacao muda -
+ * `<AddEntryForm />` dentro de um `.card`, cada lancamento vira um `.card`
+ * na lista. `AddEntryForm`/`EditEntryForm`/`DeleteEntryButton` sao mockados
+ * por completo em tests/unit/app/lancamentos-page.test.tsx - o wrapper
+ * pode mudar livremente sem tocar o contrato desses filhos.
  */
 export default async function LancamentosPage() {
   await ensureCashAccount();
@@ -25,15 +31,25 @@ export default async function LancamentosPage() {
   const accounts = await listManualAccounts();
 
   return (
-    <main>
-      <h1>Lançamentos manuais</h1>
-      <AddEntryForm accounts={accounts} />
+    <main className="flex flex-col gap-6">
+      <div className="page-head">
+        <p className="eyebrow">Fluxo manual</p>
+        <h1>Lançamentos manuais</h1>
+      </div>
+
+      <div className="card">
+        <AddEntryForm accounts={accounts} />
+      </div>
+
       {entries.length === 0 ? (
-        <p>Nenhum lançamento manual cadastrado ainda.</p>
+        <p className="empty-text">Nenhum lançamento manual cadastrado ainda.</p>
       ) : (
-        <ul>
+        <ul className="flex flex-col gap-4">
           {entries.map((entry) => (
-            <li key={entry.id}>
+            <li
+              key={entry.id}
+              className="card flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
+            >
               <EditEntryForm
                 entry={{
                   id: entry.id,

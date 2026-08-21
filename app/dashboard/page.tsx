@@ -22,6 +22,15 @@ import { formatBRL } from "@/lib/format";
  * (`lib/format.ts`) e os gastos por categoria ganham uma barra horizontal
  * proporcional. Nenhuma logica de `lib/dashboard.ts` foi tocada (Criterio
  * de aceite P6).
+ *
+ * TASK-013 (sistema de design Fintech Premium): mais uma vez so a
+ * apresentacao muda - KPI cards, barra de categoria com gradiente/glow
+ * (classes `.card`/`.kpi-*`/`.cat-row`/`.track`/`.fill` de
+ * `app/globals.css`). Todos os `data-testid` (`dashboard-receita`,
+ * `dashboard-despesa`, `dashboard-saldo`, `category-row-<n>`,
+ * `category-bar-<n>`, `dashboard-transferencias-count`,
+ * `dashboard-transferencias-total`) e o texto formatado por `formatBRL`
+ * continuam identicos (contrato de tests/unit/app/dashboard-page.test.tsx).
  */
 
 /** Sinal explicito e formatado em R$: negativo usa `formatBRL` (o Intl ja poe o "-" antes de "R$"); positivo/zero ganham "+" antes de "R$". */
@@ -47,21 +56,16 @@ function CategoryRow({
   maxTotal: number;
 }) {
   return (
-    <li
-      data-testid={`category-row-${index}`}
-      className="flex flex-col gap-1 py-2"
-    >
-      <div className="flex items-center justify-between gap-4 text-sm">
-        <span className="text-slate-700">{item.category}</span>
-        <span className="font-medium text-slate-900">{formatBRL(item.total)}</span>
-      </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-        <div
+    <li data-testid={`category-row-${index}`} className="cat-row">
+      <span className="cat-name">{item.category}</span>
+      <span className="track">
+        <span
           data-testid={`category-bar-${index}`}
-          className="h-full rounded-full bg-sky-500"
+          className="fill"
           style={{ width: `${barWidthPercent(item.total, maxTotal)}%` }}
         />
-      </div>
+      </span>
+      <span className="cat-amt num">{formatBRL(item.total)}</span>
     </li>
   );
 }
@@ -82,72 +86,83 @@ export default async function DashboardPage({
     : 0;
 
   const saldoColorClass = summary.saldo.startsWith("-")
-    ? "text-red-600"
+    ? "text-[var(--neg)]"
     : Number(summary.saldo) === 0
-      ? "text-slate-700"
-      : "text-emerald-600";
+      ? "text-[var(--text-2)]"
+      : "text-[var(--pos)]";
 
   return (
-    <main className="flex flex-col gap-8">
-      <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
-
-      <form method="GET" className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <label htmlFor="month" className="text-sm font-medium text-slate-700">
-            Mês
-          </label>
-          <input
-            id="month"
-            name="month"
-            type="month"
-            defaultValue={month}
-            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm"
-          />
+    <main className="flex flex-col gap-6">
+      <div className="page-head flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="eyebrow">Visão do mês</p>
+          <h1>Dashboard</h1>
+          <p>Quanto entrou, quanto saiu e para onde foi.</p>
         </div>
-        <button
-          type="submit"
-          className="rounded-md bg-slate-900 px-4 py-1.5 text-sm font-medium text-white"
-        >
-          Ver mês
-        </button>
-      </form>
+
+        <form method="GET" className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="month" className="field-label">
+              Mês
+            </label>
+            <input
+              id="month"
+              name="month"
+              type="month"
+              defaultValue={month}
+              className="field-input"
+            />
+          </div>
+          <button type="submit" className="btn-primary">
+            Ver mês
+          </button>
+        </form>
+      </div>
 
       <section aria-label="Resumo do período" className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-lg border border-slate-200 p-4">
-          <p className="text-sm text-slate-500">Receita</p>
+        <div className="card">
+          <p className="kpi-label">
+            <span className="kpi-dot" style={{ background: "var(--pos)" }} /> Receita
+          </p>
           <p
             data-testid="dashboard-receita"
-            className="mt-1 text-xl font-semibold text-emerald-600"
+            className="kpi-value num text-[var(--pos)]"
           >
             {formatBRL(summary.receita)}
           </p>
         </div>
-        <div className="rounded-lg border border-slate-200 p-4">
-          <p className="text-sm text-slate-500">Despesa</p>
-          <p
-            data-testid="dashboard-despesa"
-            className="mt-1 text-xl font-semibold text-red-600"
-          >
+        <div className="card">
+          <p className="kpi-label">
+            <span className="kpi-dot" style={{ background: "var(--neg)" }} /> Despesa
+          </p>
+          <p data-testid="dashboard-despesa" className="kpi-value num">
             {formatBRL(summary.despesa)}
           </p>
         </div>
-        <div className="rounded-lg border border-slate-200 p-4">
-          <p className="text-sm text-slate-500">Saldo</p>
+        <div className="card">
+          <p className="kpi-label">
+            <span className="kpi-dot" style={{ background: "var(--accent-bright)" }} />{" "}
+            Saldo do mês
+          </p>
           <p
             data-testid="dashboard-saldo"
-            className={`mt-1 text-xl font-semibold ${saldoColorClass}`}
+            className={`kpi-value num ${saldoColorClass}`}
           >
             {formatSignedAmount(summary.saldo)}
           </p>
+          <p className="kpi-sub">Receita menos despesa, sem transferências</p>
         </div>
       </section>
 
-      <section aria-label="Gastos por categoria" className="rounded-lg border border-slate-200 p-4">
-        <h2 className="text-lg font-semibold text-slate-900">Gastos por categoria</h2>
+      <section aria-label="Gastos por categoria" className="card">
+        <div className="card-head">
+          <h2 className="card-title">Gastos por categoria</h2>
+          <span className="eyebrow">{summary.porCategoria.length} categorias</span>
+        </div>
         {summary.porCategoria.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-500">Nenhum gasto no período.</p>
+          <p className="empty-text">Nenhum gasto no período.</p>
         ) : (
-          <ul className="mt-3 divide-y divide-slate-100">
+          <ul className="flex flex-col gap-4">
             {summary.porCategoria.map((item, index) => (
               <CategoryRow key={item.category} item={item} index={index} maxTotal={maxTotal} />
             ))}
@@ -155,20 +170,19 @@ export default async function DashboardPage({
         )}
       </section>
 
-      <section
-        aria-label="Transferências excluídas"
-        className="rounded-lg border border-slate-200 p-4"
-      >
-        <h2 className="text-lg font-semibold text-slate-900">Transferências excluídas</h2>
-        <p className="mt-2 text-sm text-slate-700">
+      <section aria-label="Transferências excluídas" className="card">
+        <div className="card-head">
+          <h2 className="card-title">Transferências excluídas</h2>
+        </div>
+        <p className="text-sm text-[var(--text-2)]">
           Quantidade:{" "}
-          <span data-testid="dashboard-transferencias-count">
+          <span data-testid="dashboard-transferencias-count" className="num">
             {summary.transferenciasExcluidas.count}
           </span>
         </p>
-        <p className="text-sm text-slate-700">
+        <p className="text-sm text-[var(--text-2)]">
           Total:{" "}
-          <span data-testid="dashboard-transferencias-total">
+          <span data-testid="dashboard-transferencias-total" className="num">
             {formatBRL(summary.transferenciasExcluidas.total)}
           </span>
         </p>
