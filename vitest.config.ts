@@ -45,6 +45,12 @@ export default defineConfig({
         "lib/**/*.ts",
         "app/api/**/route.ts",
         "app/bancos/**/*.tsx",
+        // TASK-012: app/layout.tsx ganha o MainNav (Criterio de aceite #1) e
+        // app/page.tsx passa a so redirecionar para /dashboard (Criterio de
+        // aceite #3) - ambos entram no escopo de cobertura junto com o novo
+        // components/nav/ (ja coberto por "components/**/*.tsx" abaixo).
+        "app/layout.tsx",
+        "app/page.tsx",
         "components/**/*.tsx",
       ],
       exclude: ["**/*.d.ts", "**/*.test.ts", "**/*.test.tsx"],

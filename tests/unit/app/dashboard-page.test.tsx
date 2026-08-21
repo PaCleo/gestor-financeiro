@@ -49,6 +49,37 @@ import { cleanup, render, screen, within } from "@testing-library/react";
  *   - "Transferências excluídas": dois elementos com `data-testid`
  *     `dashboard-transferencias-count` (contagem) e
  *     `dashboard-transferencias-total` (total, valor cru).
+ *
+ * ATUALIZACAO DELIBERADA (TASK-012 Parte 2 - apresentacao visual, Criterio
+ * de aceite P2/P3): a pagina passa a formatar os valores monetarios em R$
+ * via `formatBRL` (`lib/format.ts`, ver `tests/unit/lib/format.test.ts`)
+ * em vez de exibir a string crua do Decimal. Isso MUDA o texto esperado
+ * nos testes de receita/despesa/saldo/categoria abaixo - e uma mudanca de
+ * apresentacao intencional, NAO de logica (`getMonthlySummary` continua
+ * mockada devolvendo os mesmos valores crus; so a RENDERIZACAO mudou). Os
+ * `data-testid` (`dashboard-receita`, `dashboard-despesa`,
+ * `dashboard-saldo`, `category-row-<n>`) sao mantidos como ancora de
+ * regressao - so o CONTEUDO textual esperado foi atualizado.
+ *
+ * Contrato adicional assumido para o coder (Parte 2):
+ *   - `formatSignedAmount(amount)` passa a combinar o sinal explicito com
+ *     `formatBRL`: se `amount` comeca com "-", retorna `formatBRL(amount)`
+ *     (o Intl ja formata o sinal negativo ANTES de "R$", ex.
+ *     `formatBRL("-200.00") === "-R$ 200,00"`); caso contrario, retorna
+ *     `"+" + formatBRL(amount)` (ex. `formatBRL("561.17")` vira
+ *     `"+R$ 561,17"`, e `formatBRL("0.00")` vira `"+R$ 0,00"`).
+ *   - `dashboard-receita`/`dashboard-despesa` passam a exibir
+ *     `formatBRL(summary.receita)`/`formatBRL(summary.despesa)`.
+ *   - Cada `category-row-<indice>` passa a exibir `formatBRL(item.total)`
+ *     no lugar do valor cru (ver tambem o describe de barras proporcionais,
+ *     Criterio de aceite P3, mais abaixo neste arquivo).
+ *   - `dashboard-transferencias-count` continua com a contagem CRUA (numero
+ *     inteiro, nao e valor monetario).
+ *   - `dashboard-transferencias-total` passa a exibir
+ *     `formatBRL(summary.transferenciasExcluidas.total)` (ajuste de
+ *     consistencia pos-aprovacao da Parte 2 - a tela inteira usa R$; deixar
+ *     esse unico total cru destoava do restante). `formatBRL` e o MESMO
+ *     helper puro de `lib/format.ts` ja usado no resto desta pagina.
  */
 
 const { getMonthlySummaryMock } = vi.hoisted(() => ({
@@ -143,50 +174,62 @@ describe("app/dashboard/page.tsx - selecao de mes, default mes corrente (Criteri
   });
 });
 
-describe("app/dashboard/page.tsx - resumo do mes: receita, despesa, saldo (Criterio de aceite #1/#7)", () => {
-  it("exibe receita e despesa com os valores CRUS de getMonthlySummary (sem sinal - ja sao sempre >= 0)", async () => {
+describe("app/dashboard/page.tsx - resumo do mes: receita, despesa, saldo FORMATADOS em R$ (Criterio de aceite P2, TASK-012 Parte 2)", () => {
+  it("exibe receita e despesa FORMATADAS em R$ (nao mais o valor cru do Decimal)", async () => {
     getMonthlySummaryMock.mockResolvedValueOnce(
       buildSummary({ receita: "1500.00", despesa: "938.83" }),
     );
 
     await renderPage({ month: "2026-07" });
 
-    expect(screen.getByTestId("dashboard-receita")).toHaveTextContent("1500.00");
-    expect(screen.getByTestId("dashboard-despesa")).toHaveTextContent("938.83");
+    // toHaveTextContent normaliza espacos (inclusive o NBSP que o Intl
+    // pt-BR/BRL pode inserir entre "R$" e o numero) antes de comparar -
+    // ver node_modules/@testing-library/jest-dom `normalize()` - por isso a
+    // asserção com espaco comum abaixo e robusta ao caractere real usado.
+    expect(screen.getByTestId("dashboard-receita")).toHaveTextContent("R$ 1.500,00");
+    expect(screen.getByTestId("dashboard-despesa")).toHaveTextContent("R$ 938,83");
+    // Prova que NAO e mais o valor cru: "1500.00"/"938.83" (com ponto) nao
+    // aparecem mais no texto.
+    expect(screen.getByTestId("dashboard-receita").textContent).not.toContain(
+      "1500.00",
+    );
+    expect(screen.getByTestId("dashboard-despesa").textContent).not.toContain(
+      "938.83",
+    );
   });
 
-  it("saldo POSITIVO e exibido com o sinal '+' EXPLICITO", async () => {
+  it("saldo POSITIVO e exibido com o sinal '+' EXPLICITO e formatado em R$ ('+R$ 561,17')", async () => {
     getMonthlySummaryMock.mockResolvedValueOnce(buildSummary({ saldo: "561.17" }));
 
     await renderPage({ month: "2026-07" });
 
-    expect(screen.getByTestId("dashboard-saldo")).toHaveTextContent("+561.17");
+    expect(screen.getByTestId("dashboard-saldo")).toHaveTextContent("+R$ 561,17");
   });
 
-  it("saldo NEGATIVO e exibido com o sinal '-' (ja presente na string, sem duplicar nem virar '+-')", async () => {
+  it("saldo NEGATIVO e exibido formatado em R$, com o '-' ANTES de 'R$' (sem duplicar nem virar '+-R$')", async () => {
     getMonthlySummaryMock.mockResolvedValueOnce(buildSummary({ saldo: "-200.00" }));
 
     await renderPage({ month: "2026-07" });
 
     const saldoEl = screen.getByTestId("dashboard-saldo");
-    expect(saldoEl).toHaveTextContent("-200.00");
+    expect(saldoEl).toHaveTextContent("-R$ 200,00");
     expect(saldoEl.textContent).not.toContain("+-");
     expect(saldoEl.textContent).not.toContain("--");
   });
 
-  it("saldo ZERO nao lanca e nao mostra dois sinais", async () => {
+  it("saldo ZERO nao lanca, nao mostra dois sinais e aparece formatado em R$ ('+R$ 0,00')", async () => {
     getMonthlySummaryMock.mockResolvedValueOnce(buildSummary({ saldo: "0.00" }));
 
     await renderPage({ month: "2026-07" });
 
     const saldoEl = screen.getByTestId("dashboard-saldo");
     expect(saldoEl.textContent).not.toContain("+-");
-    expect(saldoEl.textContent).toContain("0.00");
+    expect(saldoEl).toHaveTextContent("+R$ 0,00");
   });
 });
 
-describe("app/dashboard/page.tsx - gastos por categoria (Criterio de aceite #4/#7)", () => {
-  it("renderiza uma linha por categoria de porCategoria, NA MESMA ORDEM recebida (decrescente, ja ordenada por lib/dashboard.ts)", async () => {
+describe("app/dashboard/page.tsx - gastos por categoria (Criterio de aceite #4/#7, valores formatados em R$ - Criterio de aceite P2/P3)", () => {
+  it("renderiza uma linha por categoria de porCategoria, NA MESMA ORDEM recebida (decrescente, ja ordenada por lib/dashboard.ts), com o total FORMATADO em R$", async () => {
     getMonthlySummaryMock.mockResolvedValueOnce(
       buildSummary({
         porCategoria: [
@@ -204,9 +247,9 @@ describe("app/dashboard/page.tsx - gastos por categoria (Criterio de aceite #4/#
     const row2 = screen.getByTestId("category-row-2");
 
     expect(within(row0).getByText(/Housing/)).toBeInTheDocument();
-    expect(within(row0).getByText(/800\.00/)).toBeInTheDocument();
+    expect(within(row0).getByText(/R\$\s*800,00/)).toBeInTheDocument();
     expect(within(row1).getByText(/Online shopping/)).toBeInTheDocument();
-    expect(within(row1).getByText(/138\.83/)).toBeInTheDocument();
+    expect(within(row1).getByText(/R\$\s*138,83/)).toBeInTheDocument();
     expect(within(row2).getByText(/Sem categoria/)).toBeInTheDocument();
 
     expect(screen.queryByTestId("category-row-3")).not.toBeInTheDocument();
@@ -224,6 +267,94 @@ describe("app/dashboard/page.tsx - gastos por categoria (Criterio de aceite #4/#
   });
 });
 
+/**
+ * Barras horizontais proporcionais (Criterio de aceite P3, TASK-012 Parte
+ * 2). Contrato assumido para o coder: cada `category-row-<indice>` ganha um
+ * elemento IRMAO/FILHO com `data-testid="category-bar-<indice>"` cujo estilo
+ * inline `width` e uma porcentagem proporcional ao valor da categoria em
+ * relacao ao MAIOR valor do conjunto `porCategoria` daquela renderizacao
+ * (nao um valor global/hardcoded): `largura% = (total_da_categoria /
+ * maior_total_do_conjunto) * 100`. A categoria de maior valor sempre fica em
+ * 100%.
+ *
+ * Os testes abaixo leem `style.width` via `parseFloat` (tolerante a
+ * diferencas de formatacao como "50%" vs "50.00%" - nao e o que se quer
+ * travar aqui) e comparam o NUMERO, o que prova a PROPORCAO real. O segundo
+ * teste usa valores (100/90/10) deliberadamente DIFERENTES do que um
+ * "ranking por posicao" produziria (que daria algo como 100%/66%/33% para 3
+ * itens) - isso tem poder de deteccao real contra uma implementacao que
+ * despeja um valor fixo por posicao em vez de calcular a proporcao de fato.
+ */
+describe("app/dashboard/page.tsx - gastos por categoria como barras proporcionais (Criterio de aceite P3, TASK-012 Parte 2)", () => {
+  function widthPercent(testId: string): number {
+    const bar = screen.getByTestId(testId);
+    return Number.parseFloat(bar.style.width);
+  }
+
+  it("a categoria de MAIOR valor tem a barra em 100% de largura; as demais, proporcionais (100/50/25 -> 100%/50%/25%)", async () => {
+    getMonthlySummaryMock.mockResolvedValueOnce(
+      buildSummary({
+        porCategoria: [
+          { category: "Maior", total: "100.00" },
+          { category: "Metade", total: "50.00" },
+          { category: "Um quarto", total: "25.00" },
+        ],
+      }),
+    );
+
+    await renderPage({ month: "2026-07" });
+
+    expect(widthPercent("category-bar-0")).toBeCloseTo(100, 5);
+    expect(widthPercent("category-bar-1")).toBeCloseTo(50, 5);
+    expect(widthPercent("category-bar-2")).toBeCloseTo(25, 5);
+    expect(screen.getByTestId("category-bar-0").style.width.trim()).toMatch(/%$/);
+  });
+
+  it("prova a PROPORCAO real (nao apenas o ranking/posicao): 100/90/10 gera 100%/90%/10%, distinguindo de um calculo por posicao (que daria ~100%/66%/33%)", async () => {
+    getMonthlySummaryMock.mockResolvedValueOnce(
+      buildSummary({
+        porCategoria: [
+          { category: "A", total: "100.00" },
+          { category: "B", total: "90.00" },
+          { category: "C", total: "10.00" },
+        ],
+      }),
+    );
+
+    await renderPage({ month: "2026-07" });
+
+    expect(widthPercent("category-bar-0")).toBeCloseTo(100, 5);
+    expect(widthPercent("category-bar-1")).toBeCloseTo(90, 5);
+    expect(widthPercent("category-bar-2")).toBeCloseTo(10, 5);
+  });
+
+  it("com UMA UNICA categoria, a barra ocupa 100% mesmo sozinha (maior valor do conjunto e ela mesma)", async () => {
+    getMonthlySummaryMock.mockResolvedValueOnce(
+      buildSummary({ porCategoria: [{ category: "Unica", total: "42.00" }] }),
+    );
+
+    await renderPage({ month: "2026-07" });
+
+    expect(widthPercent("category-bar-0")).toBeCloseTo(100, 5);
+  });
+
+  it("categoria com valor ZERO ao lado de outra com valor positivo gera barra de 0% (sem NaN/Infinity)", async () => {
+    getMonthlySummaryMock.mockResolvedValueOnce(
+      buildSummary({
+        porCategoria: [
+          { category: "Com gasto", total: "100.00" },
+          { category: "Sem gasto", total: "0.00" },
+        ],
+      }),
+    );
+
+    await renderPage({ month: "2026-07" });
+
+    expect(widthPercent("category-bar-0")).toBeCloseTo(100, 5);
+    expect(widthPercent("category-bar-1")).toBeCloseTo(0, 5);
+  });
+});
+
 describe("app/dashboard/page.tsx - transferencias excluidas, transparencia (secao 2, DT-018)", () => {
   it("exibe a CONTAGEM e o TOTAL de transferencias excluidas, visiveis na tela", async () => {
     getMonthlySummaryMock.mockResolvedValueOnce(
@@ -235,12 +366,19 @@ describe("app/dashboard/page.tsx - transferencias excluidas, transparencia (seca
     expect(screen.getByTestId("dashboard-transferencias-count")).toHaveTextContent(
       "4",
     );
+    // Formatado em R$ (toHaveTextContent normaliza o NBSP que o Intl
+    // pt-BR/BRL pode inserir - mesmo cuidado dos outros valores desta
+    // pagina, ver tests/unit/lib/format.test.ts).
     expect(screen.getByTestId("dashboard-transferencias-total")).toHaveTextContent(
-      "4800.00",
+      "R$ 4.800,00",
     );
+    // Prova que NAO e mais o valor cru.
+    expect(
+      screen.getByTestId("dashboard-transferencias-total").textContent,
+    ).not.toContain("4800.00");
   });
 
-  it("com ZERO transferencias excluidas, mostra contagem 0 e total 0.00 (nao esconde a linha)", async () => {
+  it("com ZERO transferencias excluidas, mostra contagem 0 e total formatado 'R$ 0,00' (nao esconde a linha)", async () => {
     getMonthlySummaryMock.mockResolvedValueOnce(
       buildSummary({ transferenciasExcluidas: { count: 0, total: "0.00" } }),
     );
@@ -251,7 +389,7 @@ describe("app/dashboard/page.tsx - transferencias excluidas, transparencia (seca
       "0",
     );
     expect(screen.getByTestId("dashboard-transferencias-total")).toHaveTextContent(
-      "0.00",
+      "R$ 0,00",
     );
   });
 });
