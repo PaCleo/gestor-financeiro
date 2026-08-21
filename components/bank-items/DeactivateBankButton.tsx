@@ -47,21 +47,24 @@ export function DeactivateBankButton({
   }
 
   if (state === "success") {
-    return <p>Banco desativado com sucesso.</p>;
+    return <p className="text-sm text-[var(--pos)]">Banco desativado com sucesso.</p>;
   }
 
   return (
-    <div>
+    <div className="flex flex-col items-end gap-2">
       <button
         type="button"
         onClick={handleDeactivateClick}
         disabled={state === "loading"}
+        className="btn-danger"
       >
         Desativar
       </button>
-      {state === "loading" && <p>Desativando...</p>}
+      {state === "loading" && <p className="hint-text">Desativando...</p>}
       {state === "error" && (
-        <p>Nao foi possivel desativar este banco. Tente novamente.</p>
+        <p className="text-sm text-[var(--neg)]">
+          Nao foi possivel desativar este banco. Tente novamente.
+        </p>
       )}
     </div>
   );

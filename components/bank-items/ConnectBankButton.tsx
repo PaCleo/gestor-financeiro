@@ -92,19 +92,22 @@ export function ConnectBankButton() {
   }
 
   return (
-    <div>
+    <div className="flex flex-col gap-2">
       {state !== "widget" && (
         <button
           type="button"
           onClick={handleConnectClick}
           disabled={state === "loading"}
+          className="btn-primary w-fit"
         >
           Conectar banco
         </button>
       )}
-      {state === "loading" && <p>Conectando...</p>}
+      {state === "loading" && <p className="hint-text">Conectando...</p>}
       {state === "error" && (
-        <p>Nao foi possivel conectar seu banco. Tente novamente.</p>
+        <p className="text-sm text-[var(--neg)]">
+          Nao foi possivel conectar seu banco. Tente novamente.
+        </p>
       )}
       {state === "widget" && connectToken && (
         <PluggyConnect

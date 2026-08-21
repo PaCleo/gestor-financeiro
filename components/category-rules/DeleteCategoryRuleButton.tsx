@@ -50,21 +50,24 @@ export function DeleteCategoryRuleButton({
   }
 
   if (state === "success") {
-    return <p>Regra removida com sucesso.</p>;
+    return <p className="text-sm text-[var(--pos)]">Regra removida com sucesso.</p>;
   }
 
   return (
-    <div>
+    <div className="flex flex-col items-end gap-2">
       <button
         type="button"
         onClick={handleDeleteClick}
         disabled={state === "loading"}
+        className="btn-danger"
       >
         Remover
       </button>
-      {state === "loading" && <p>Removendo...</p>}
+      {state === "loading" && <p className="hint-text">Removendo...</p>}
       {state === "error" && (
-        <p>Nao foi possivel remover esta regra. Tente novamente.</p>
+        <p className="text-sm text-[var(--neg)]">
+          Nao foi possivel remover esta regra. Tente novamente.
+        </p>
       )}
     </div>
   );

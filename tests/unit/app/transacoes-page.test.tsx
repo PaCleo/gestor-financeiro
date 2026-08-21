@@ -51,6 +51,14 @@ import { cleanup, render, screen, within } from "@testing-library/react";
  *     JA RESOLVIDA (o dado que chega de `listTransactions` - a pagina so
  *     exibe, a resolucao override->Pluggy e responsabilidade de `lib/transactions.ts`,
  *     Criterio de aceite #2);
+ *
+ * ATUALIZACAO DELIBERADA (TASK-013 - consistencia visual, moeda em R$ em
+ * todas as telas): o valor da transacao passa a ser exibido FORMATADO via
+ * `formatBRL` (`lib/format.ts`, mesmo helper puro ja usado por
+ * app/dashboard/page.tsx desde TASK-012 Parte 2) em vez do valor cru do
+ * Decimal (`"-45.90"`). O sinal explicito ("-"/"+") e mantido, so combinado
+ * com `formatBRL` - mesmo contrato de `formatSignedAmount` documentado em
+ * tests/unit/app/dashboard-page.test.tsx.
  *   - quando `status === "PENDING"`, a linha mostra um indicador textual
  *     "Pendente" visivel; quando `"POSTED"`, esse indicador NAO aparece
  *     (Criterio de aceite #5);
@@ -133,7 +141,7 @@ describe("app/transacoes/page.tsx - lista transacoes com data, descricao, valor 
     expect(row.textContent).toContain("2026");
   });
 
-  it("valor negativo e exibido com o sinal '-' explicito", async () => {
+  it("valor negativo e exibido com o sinal '-' explicito, FORMATADO em R$ (nao mais o valor cru do Decimal)", async () => {
     listTransactionsMock.mockResolvedValueOnce({
       transactions: [
         buildTransactionItem({ id: "tx-neg", amount: "-45.90", description: "Debito" }),
@@ -147,11 +155,16 @@ describe("app/transacoes/page.tsx - lista transacoes com data, descricao, valor 
     await renderPage();
 
     const row = screen.getByTestId("transaction-row-tx-neg");
-    expect(row.textContent).toMatch(/-\s?4?\D?5/);
-    expect(row.textContent).toContain("-45");
+    // toHaveTextContent normaliza espacos (inclusive o NBSP que o Intl
+    // pt-BR/BRL pode inserir entre "R$" e o numero) antes de comparar - ver
+    // node_modules/@testing-library/jest-dom `normalize()` - mesma tecnica
+    // de tests/unit/app/dashboard-page.test.tsx (TASK-012 Parte 2).
+    expect(row).toHaveTextContent("-R$ 45,90");
+    // Prova que NAO e mais o valor cru: "-45.90" (com ponto) nao aparece.
+    expect(row.textContent).not.toContain("-45.90");
   });
 
-  it("valor positivo e exibido com o sinal '+' EXPLICITO (nao so ausencia de sinal)", async () => {
+  it("valor positivo e exibido com o sinal '+' EXPLICITO (nao so ausencia de sinal), FORMATADO em R$", async () => {
     listTransactionsMock.mockResolvedValueOnce({
       transactions: [
         buildTransactionItem({ id: "tx-pos", amount: "230.00", description: "Estorno" }),
@@ -165,7 +178,9 @@ describe("app/transacoes/page.tsx - lista transacoes com data, descricao, valor 
     await renderPage();
 
     const row = screen.getByTestId("transaction-row-tx-pos");
-    expect(row.textContent).toContain("+230");
+    expect(row).toHaveTextContent("+R$ 230,00");
+    // Prova que NAO e mais o valor cru: "230.00" (com ponto) nao aparece.
+    expect(row.textContent).not.toContain("230.00");
   });
 
   it("categoria ausente (null) mostra um placeholder, nunca a string 'null'/'undefined'", async () => {

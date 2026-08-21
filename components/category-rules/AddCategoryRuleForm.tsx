@@ -70,42 +70,63 @@ export function AddCategoryRuleForm({
   }
 
   return (
-    <form aria-label="Adicionar regra de categorizacao" onSubmit={handleSubmit}>
-      <div>
-        <label htmlFor="category-rule-document">Documento (CPF/CNPJ)</label>
-        <input
-          id="category-rule-document"
-          type="text"
-          value={document}
-          onChange={(event) => setDocument(event.target.value)}
-        />
+    <form
+      aria-label="Adicionar regra de categorizacao"
+      onSubmit={handleSubmit}
+      className="flex flex-col gap-4"
+    >
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="category-rule-document" className="field-label">
+            Documento (CPF/CNPJ)
+          </label>
+          <input
+            id="category-rule-document"
+            type="text"
+            value={document}
+            onChange={(event) => setDocument(event.target.value)}
+            className="field-input"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="category-rule-category" className="field-label">
+            Categoria
+          </label>
+          <input
+            id="category-rule-category"
+            type="text"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+            className="field-input"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="category-rule-label" className="field-label">
+            Rótulo (opcional)
+          </label>
+          <input
+            id="category-rule-label"
+            type="text"
+            value={label}
+            onChange={(event) => setLabel(event.target.value)}
+            className="field-input"
+          />
+        </div>
       </div>
-      <div>
-        <label htmlFor="category-rule-category">Categoria</label>
-        <input
-          id="category-rule-category"
-          type="text"
-          value={category}
-          onChange={(event) => setCategory(event.target.value)}
-        />
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="submit" disabled={state === "loading"} className="btn-primary">
+          Adicionar regra
+        </button>
+        {state === "loading" && <p className="hint-text">Salvando...</p>}
+        {state === "success" && (
+          <p className="text-sm text-[var(--pos)]">Regra adicionada com sucesso.</p>
+        )}
+        {state === "error" && (
+          <p className="text-sm text-[var(--neg)]">
+            Nao foi possivel cadastrar esta regra. Tente novamente.
+          </p>
+        )}
       </div>
-      <div>
-        <label htmlFor="category-rule-label">Rótulo (opcional)</label>
-        <input
-          id="category-rule-label"
-          type="text"
-          value={label}
-          onChange={(event) => setLabel(event.target.value)}
-        />
-      </div>
-      <button type="submit" disabled={state === "loading"}>
-        Adicionar regra
-      </button>
-      {state === "loading" && <p>Salvando...</p>}
-      {state === "success" && <p>Regra adicionada com sucesso.</p>}
-      {state === "error" && (
-        <p>Nao foi possivel cadastrar esta regra. Tente novamente.</p>
-      )}
     </form>
   );
 }
