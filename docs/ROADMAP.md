@@ -65,6 +65,6 @@
 |---|---|---|
 | [TASK-012](./tasks/TASK-012.md) | Navegação entre as telas | CONCLUÍDA |
 | [TASK-013](./tasks/TASK-013.md) | Sistema de design Fintech Premium (todas as telas) | CONCLUÍDA |
-| [TASK-014](./tasks/TASK-014.md) | Correção: pagamento de fatura fora do gasto + gastos por método | EM ANDAMENTO |
+| [TASK-014](./tasks/TASK-014.md) | Correção: pagamento de fatura fora do gasto + gastos por método | CONCLUÍDA |
 | [TASK-015](./tasks/TASK-015.md) | Ciclo de fatura por cartão + fatura atual + cards por cartão | PLANEJADA |
 | — | Webhooks, conciliação manual↔Pluggy, tratamento de expiração de consentimento | PENDENTE |

@@ -80,6 +80,31 @@ import { cleanup, render, screen, within } from "@testing-library/react";
  *     consistencia pos-aprovacao da Parte 2 - a tela inteira usa R$; deixar
  *     esse unico total cru destoava do restante). `formatBRL` e o MESMO
  *     helper puro de `lib/format.ts` ja usado no resto desta pagina.
+ *
+ * TASK-014 (correcao: pagamento de fatura fora do gasto + gastos por
+ * metodo, Criterio de aceite #5) - MUDANCA DELIBERADA DE CONTRATO: o mock
+ * de `getMonthlySummary` (`buildSummary()` abaixo) ganha os DOIS campos
+ * novos do shape ampliado de `MonthlySummary` (contrato completo em
+ * tests/integration/dashboard.integration.test.ts) - `porMetodo` e
+ * `pagamentosFaturaExcluidos`. Isso NAO enfraquece nenhum teste existente
+ * (os testes anteriores continuam checando exatamente os mesmos
+ * `data-testid`/textos de antes); e necessario porque a pagina agora LE
+ * esses campos para renderizar as novas secoes abaixo - sem eles no mock,
+ * a pagina quebraria com `undefined` em TODOS os testes desta suite, nao
+ * so nos novos.
+ *
+ * Contrato adicional assumido para o coder (TASK-014):
+ *   - Nova secao "Gastos por método", com 4 elementos `data-testid`
+ *     (mesmo padrao `.card`/`.kpi-*` das secoes de receita/despesa/saldo):
+ *     `dashboard-metodo-credito`, `dashboard-metodo-pix-ted`,
+ *     `dashboard-metodo-debito`, `dashboard-metodo-dinheiro` - cada um
+ *     exibindo `formatBRL(summary.porMetodo.<campo>)`.
+ *   - Nova secao "Pagamentos de fatura excluídos" (mesmo espirito de
+ *     transparencia da secao "Transferências excluídas" ja existente, MAS
+ *     SEPARADA dela - Criterio de aceite #3), com dois `data-testid`:
+ *     `dashboard-pagamentos-fatura-count` (contagem crua) e
+ *     `dashboard-pagamentos-fatura-total`
+ *     (`formatBRL(summary.pagamentosFaturaExcluidos.total)`).
  */
 
 const { getMonthlySummaryMock } = vi.hoisted(() => ({
@@ -104,7 +129,13 @@ function buildSummary(overrides: Record<string, unknown> = {}) {
       { category: "Housing", total: "800.00" },
       { category: "Online shopping", total: "138.83" },
     ],
+    // TASK-014: campos novos do shape ampliado de MonthlySummary (ver
+    // docblock no topo deste arquivo) - default com valores distintos
+    // entre si para que os testes tenham poder de deteccao real contra uma
+    // implementacao que confunda os 4 buckets entre si.
+    porMetodo: { credito: "138.83", pixTed: "290.00", debito: "60.00", dinheiro: "45.50" },
     transferenciasExcluidas: { count: 4, total: "4800.00" },
+    pagamentosFaturaExcluidos: { count: 1, total: "3408.84" },
     ...overrides,
   };
 }
@@ -389,6 +420,88 @@ describe("app/dashboard/page.tsx - transferencias excluidas, transparencia (seca
       "0",
     );
     expect(screen.getByTestId("dashboard-transferencias-total")).toHaveTextContent(
+      "R$ 0,00",
+    );
+  });
+});
+
+describe("app/dashboard/page.tsx - cards de gasto por método (Criterio de aceite #5, TASK-014)", () => {
+  it("exibe os 4 valores de porMetodo, cada um FORMATADO em R$, sem confundir um bucket com outro", async () => {
+    getMonthlySummaryMock.mockResolvedValueOnce(
+      buildSummary({
+        porMetodo: { credito: "138.83", pixTed: "290.00", debito: "60.00", dinheiro: "45.50" },
+      }),
+    );
+
+    await renderPage({ month: "2026-07" });
+
+    expect(screen.getByTestId("dashboard-metodo-credito")).toHaveTextContent(
+      "R$ 138,83",
+    );
+    expect(screen.getByTestId("dashboard-metodo-pix-ted")).toHaveTextContent(
+      "R$ 290,00",
+    );
+    expect(screen.getByTestId("dashboard-metodo-debito")).toHaveTextContent(
+      "R$ 60,00",
+    );
+    expect(screen.getByTestId("dashboard-metodo-dinheiro")).toHaveTextContent(
+      "R$ 45,50",
+    );
+  });
+
+  it("todos os 4 buckets ZERADOS ('0.00') nao lancam e mostram 'R$ 0,00' em cada card", async () => {
+    getMonthlySummaryMock.mockResolvedValueOnce(
+      buildSummary({
+        porMetodo: { credito: "0.00", pixTed: "0.00", debito: "0.00", dinheiro: "0.00" },
+      }),
+    );
+
+    await renderPage({ month: "2026-07" });
+
+    expect(screen.getByTestId("dashboard-metodo-credito")).toHaveTextContent("R$ 0,00");
+    expect(screen.getByTestId("dashboard-metodo-pix-ted")).toHaveTextContent("R$ 0,00");
+    expect(screen.getByTestId("dashboard-metodo-debito")).toHaveTextContent("R$ 0,00");
+    expect(screen.getByTestId("dashboard-metodo-dinheiro")).toHaveTextContent("R$ 0,00");
+  });
+});
+
+describe("app/dashboard/page.tsx - pagamentos de fatura excluídos, transparência SEPARADA de transferências (Criterio de aceite #3/#5, TASK-014)", () => {
+  it("exibe a CONTAGEM e o TOTAL de pagamentosFaturaExcluidos, formatado em R$, em elementos DIFERENTES dos de transferenciasExcluidas", async () => {
+    getMonthlySummaryMock.mockResolvedValueOnce(
+      buildSummary({
+        pagamentosFaturaExcluidos: { count: 1, total: "3408.84" },
+        transferenciasExcluidas: { count: 4, total: "4800.00" },
+      }),
+    );
+
+    await renderPage({ month: "2026-07" });
+
+    expect(screen.getByTestId("dashboard-pagamentos-fatura-count")).toHaveTextContent(
+      "1",
+    );
+    expect(screen.getByTestId("dashboard-pagamentos-fatura-total")).toHaveTextContent(
+      "R$ 3.408,84",
+    );
+    // Continua distinto do card de transferencias (nao foi somado nele).
+    expect(screen.getByTestId("dashboard-transferencias-count")).toHaveTextContent(
+      "4",
+    );
+    expect(screen.getByTestId("dashboard-transferencias-total")).toHaveTextContent(
+      "R$ 4.800,00",
+    );
+  });
+
+  it("com ZERO pagamentos de fatura excluidos, mostra contagem 0 e total 'R$ 0,00' (nao esconde a linha)", async () => {
+    getMonthlySummaryMock.mockResolvedValueOnce(
+      buildSummary({ pagamentosFaturaExcluidos: { count: 0, total: "0.00" } }),
+    );
+
+    await renderPage({ month: "2026-07" });
+
+    expect(screen.getByTestId("dashboard-pagamentos-fatura-count")).toHaveTextContent(
+      "0",
+    );
+    expect(screen.getByTestId("dashboard-pagamentos-fatura-total")).toHaveTextContent(
       "R$ 0,00",
     );
   });
