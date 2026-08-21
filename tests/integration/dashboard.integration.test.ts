@@ -1,7 +1,12 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { resetDatabase } from "../setup/reset-db";
-import { buildAccount, buildBankItem, buildTransaction } from "../fixtures/db";
+import {
+  buildAccount,
+  buildBankItem,
+  buildCreditCardBill,
+  buildTransaction,
+} from "../fixtures/db";
 
 /**
  * Testes de integracao de `getMonthlySummary` (lib/dashboard.ts, TASK-010 -
@@ -92,22 +97,47 @@ import { buildAccount, buildBankItem, buildTransaction } from "../fixtures/db";
  *     // SEGUINTE neste calculo. Mesma convencao/mesmo caveat ja aceito na
  *     // TASK-007 (listTransactions) - nao resolvido aqui, so documentado.
  *     //
- *     // Passos: 1) busca TODAS as Transaction no where acima (sem
- *     // paginacao - o dashboard soma TUDO do mes, nao lista linha a
- *     // linha); 2) para cada linha, `isTransfer = TRANSFER_CATEGORIES
- *     // includes row.category` (CRUA); 3) transferencia -> conta em
- *     // transferenciasExcluidas (count++, total += abs(amount)), NAO entra
- *     // em receita/despesa/porCategoria; 4) nao-transferencia com amount >
- *     // 0 -> soma em receita; 5) nao-transferencia com amount < 0 -> soma
+ *     // Passos (ATUALIZADO pela TASK-014 - passos 4 e 5 mudam, o resto
+ *     // continua igual): 1) busca TODAS as Transaction no where acima (sem
+ *     // paginacao), agora com SELECT AMPLIADO: alem de amount/category/
+ *     // categoryOverride/categoryFromRule, tambem `date: true`, `method: true`
+ *     // e `account: { select: { type: true } }` (necessarios para o
+ *     // casamento de fatura e a classificacao por metodo abaixo); 1b) busca
+ *     // TAMBEM `prisma.creditCardBill.findMany({ select: { totalAmount:
+ *     // true, dueDate: true } })` - TODAS as faturas do sistema, SEM
+ *     // filtro de mes nem de conta (uma fatura com `dueDate` no mes
+ *     // SEGUINTE pode ter sido paga dentro da janela ainda no mes
+ *     // consultado - ver describe "janela atravessa a borda do mes"
+ *     // abaixo); 2) para cada linha de Transaction, `isTransfer =
+ *     // TRANSFER_CATEGORIES includes row.category` (CRUA); 3) transferencia
+ *     // -> conta em transferenciasExcluidas (count++, total += abs(amount)),
+ *     // NAO entra em receita/despesa/porCategoria/porMetodo; 4) SENAO, se
+ *     // `row.account.type !== "CREDIT_CARD"` E `isBillPayment({ amount:
+ *     // row.amount.toString(), date: row.date }, bills)` (a funcao PURA de
+ *     // lib/dashboard.ts, contrato completo em
+ *     // tests/unit/lib/dashboard.test.ts) -> conta em
+ *     // pagamentosFaturaExcluidos (count++, total += abs(amount)), NAO
+ *     // entra em receita/despesa/porCategoria/porMetodo (MESMO TRATAMENTO
+ *     // de transferencia, campo SEPARADO - Criterio de aceite #3, decisao
+ *     // desta task); transacoes de conta CREDIT_CARD NUNCA passam por
+ *     // `isBillPayment` (a checagem de tipo de conta e ANTES de chamar a
+ *     // funcao pura); 5) SENAO, nao-transferencia/nao-pagamento-de-fatura
+ *     // com amount > 0 -> soma em receita; 6) idem com amount < 0 -> soma
  *     // (abs) em despesa E no bucket de porCategoria da categoria EFETIVA
  *     // (resolveTransactionCategory de @/lib/transactions, ou
- *     // NO_CATEGORY_LABEL se null); 6) amount === 0 -> nao entra em
- *     // receita NEM despesa NEM porCategoria (nem transferencia, salvo se
- *     // a categoria crua for de transferencia - af entra em
- *     // transferenciasExcluidas com total += 0); 7) porCategoria ordenado
- *     // DECRESCENTE por total (Number(total) desc); 8) saldo = receita -
- *     // despesa (aritmetica decimal exata, nunca float/Number ao longo do
- *     // caminho - usar Prisma.Decimal ou equivalente).
+ *     // NO_CATEGORY_LABEL se null) E, via `classifyExpenseMethod({
+ *     // accountType: row.account.type, method: row.method })`, no bucket
+ *     // correspondente de `porMetodo` (se o resultado NAO for null - uma
+ *     // classificacao null nao soma em nenhum bucket de porMetodo, mas
+ *     // CONTINUA somando em despesa/porCategoria normalmente); 7) amount
+ *     // === 0 -> nao entra em receita NEM despesa NEM porCategoria NEM
+ *     // porMetodo (nem transferencia/pagamento de fatura, salvo se a
+ *     // categoria crua for de transferencia ou o valor+janela casarem com
+ *     // uma fatura - af entra no respectivo campo excluido com total +=
+ *     // 0); 8) porCategoria ordenado DECRESCENTE por total (Number(total)
+ *     // desc); 9) saldo = receita - despesa (aritmetica decimal exata,
+ *     // nunca float/Number ao longo do caminho - usar Prisma.Decimal ou
+ *     // equivalente, EM TODOS os campos novos tambem).
  */
 
 beforeEach(async () => {
@@ -609,7 +639,7 @@ describe("getMonthlySummary - bordas (valor zero, mes sem nenhuma transacao, pre
     expect(summary.porCategoria).toEqual([]);
   });
 
-  it("mes sem NENHUMA transacao devolve zeros e listas vazias, sem lancar", async () => {
+  it("mes sem NENHUMA transacao devolve zeros e listas vazias, sem lancar (MUDANCA DELIBERADA DE CONTRATO na TASK-014: o objeto ganha porMetodo e pagamentosFaturaExcluidos, ambos zerados - nao e enfraquecimento, e o novo shape completo de MonthlySummary documentado no topo deste arquivo)", async () => {
     await createAccountWithBankItem();
 
     const { getMonthlySummary } = await import("@/lib/dashboard");
@@ -621,7 +651,9 @@ describe("getMonthlySummary - bordas (valor zero, mes sem nenhuma transacao, pre
       despesa: "0.00",
       saldo: "0.00",
       porCategoria: [],
+      porMetodo: { credito: "0.00", pixTed: "0.00", debito: "0.00", dinheiro: "0.00" },
       transferenciasExcluidas: { count: 0, total: "0.00" },
+      pagamentosFaturaExcluidos: { count: 0, total: "0.00" },
     });
   });
 
@@ -689,5 +721,462 @@ describe("getMonthlySummary - multiplas contas somam juntas (o dashboard e agreg
 
     expect(summary.despesa).toBe("150.00");
     expect(summary.porCategoria).toEqual([{ category: "Housing", total: "150.00" }]);
+  });
+});
+
+/**
+ * TASK-014 - o EIXO desta task: casamento de pagamento de fatura por
+ * valor+janela (Criterio de aceite #1/#2), substitui a exclusao por
+ * categoria (DT-018 ficava cego para o pagamento real: um debito de
+ * -R$3.408,84 categorizado pela Pluggy como "Loans and financing", que
+ * NAO esta em TRANSFER_CATEGORIES). Usa `buildCreditCardBill` (mesmos
+ * valores da sondagem real - dueDate 2026-08-10, total R$3.408,84).
+ */
+describe("getMonthlySummary - deteccao de pagamento de fatura por valor+janela (Criterio de aceite #1/#2, TASK-014 - substitui a lacuna do DT-018)", () => {
+  it("CASO 1 dos 3: debito de conta corrente = total da fatura, DENTRO da janela do vencimento -> NAO entra em despesa, conta em pagamentosFaturaExcluidos (reproduz o caso real: categoria 'Loans and financing', valor -3408.84)", async () => {
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD", name: "Cartão Gold" });
+    const contaCorrente = await createAccountWithBankItem({ name: "Conta Corrente" });
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: "3408.84",
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-pagamento-fatura-real",
+        category: "Loans and financing",
+        amount: "-3408.84",
+        date: new Date("2026-08-05T12:00:00.000Z"),
+        description: "Pagamento de fatura do cartão Gold",
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.despesa).toBe("0.00");
+    expect(summary.porCategoria).toEqual([]);
+    expect(summary.pagamentosFaturaExcluidos).toEqual({ count: 1, total: "3408.84" });
+  });
+
+  it("CASO 2 dos 3: MESMO valor, mas FORA da janela de data -> conta normal como despesa (nao e o pagamento DAQUELA fatura)", async () => {
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD" });
+    const contaCorrente = await createAccountWithBankItem();
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: "3408.84",
+      }),
+    });
+    // 21 dias antes do vencimento - bem fora da janela de +-10 dias.
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-mesmo-valor-fora-da-janela",
+        category: "Loans and financing",
+        amount: "-3408.84",
+        date: new Date("2026-07-20T12:00:00.000Z"),
+        description: "Debito coincidentemente igual ao total da fatura, mas fora da janela",
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-07");
+
+    expect(summary.despesa).toBe("3408.84");
+    expect(summary.porCategoria).toEqual([
+      { category: "Loans and financing", total: "3408.84" },
+    ]);
+    expect(summary.pagamentosFaturaExcluidos).toEqual({ count: 0, total: "0.00" });
+  });
+
+  it("CASO 3 dos 3: gasto REAL de 'Loans and financing' que NAO casa com nenhuma fatura (valor diferente) -> conta como despesa - a categoria inteira NAO e excluida, so o que casa com fatura", async () => {
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD" });
+    const contaCorrente = await createAccountWithBankItem();
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: "3408.84",
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-loans-financing-real-sem-match",
+        category: "Loans and financing",
+        amount: "-500.00",
+        date: new Date("2026-08-05T12:00:00.000Z"),
+        description: "Parcela de emprestimo real, nao relacionada a fatura do cartao",
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.despesa).toBe("500.00");
+    expect(summary.porCategoria).toEqual([
+      { category: "Loans and financing", total: "500.00" },
+    ]);
+    expect(summary.pagamentosFaturaExcluidos).toEqual({ count: 0, total: "0.00" });
+  });
+
+  it("no limite EXATO da janela (+10 dias do vencimento) -> ainda casa (janela inclusiva nos dois extremos)", async () => {
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD" });
+    const contaCorrente = await createAccountWithBankItem();
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: "3408.84",
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-no-limite-da-janela",
+        category: "Loans and financing",
+        amount: "-3408.84",
+        date: new Date("2026-08-20T00:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.pagamentosFaturaExcluidos).toEqual({ count: 1, total: "3408.84" });
+    expect(summary.despesa).toBe("0.00");
+  });
+
+  it("valor POSITIVO (credito/estorno) igual ao total da fatura, dentro da janela -> NAO e excluido de receita: SO debito conta como pagamento de fatura", async () => {
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD" });
+    const contaCorrente = await createAccountWithBankItem();
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: "3408.84",
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-credito-mesmo-valor",
+        category: "Non-recurring income",
+        amount: "3408.84",
+        date: new Date("2026-08-05T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.receita).toBe("3408.84");
+    expect(summary.pagamentosFaturaExcluidos).toEqual({ count: 0, total: "0.00" });
+  });
+
+  it("um debito NA PROPRIA conta CREDIT_CARD, igual ao total da fatura e dentro da janela, NAO e excluido - a regra e SO para conta nao-cartao (a decisao fala em 'debito de conta nao-cartao')", async () => {
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD" });
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: "3408.84",
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(cartao.id, {
+        pluggyTransactionId: "tx-debito-na-propria-conta-cartao",
+        category: "Loans and financing",
+        amount: "-3408.84",
+        date: new Date("2026-08-05T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.despesa).toBe("3408.84");
+    expect(summary.pagamentosFaturaExcluidos).toEqual({ count: 0, total: "0.00" });
+  });
+
+  it("a janela ATRAVESSA a borda do mes: fatura com dueDate no mes SEGUINTE ao mes consultado ainda casa - prova que CreditCardBill e buscada SEM filtro de mes", async () => {
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD" });
+    const contaCorrente = await createAccountWithBankItem();
+    // dueDate em julho; pagamento feito em junho, 5 dias antes - dentro da
+    // janela de +-10 dias, mas em MES DIFERENTE do vencimento.
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        dueDate: new Date("2026-07-03T00:00:00.000Z"),
+        totalAmount: "1200.00",
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-pagamento-antecipado-mes-anterior",
+        category: "Loans and financing",
+        amount: "-1200.00",
+        date: new Date("2026-06-28T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-06");
+
+    expect(summary.despesa).toBe("0.00");
+    expect(summary.pagamentosFaturaExcluidos).toEqual({ count: 1, total: "1200.00" });
+  });
+
+  it("duas faturas com o MESMO total; a transacao casa com a janela de SO uma delas -> ainda exclui uma unica vez (nao duplica a exclusao)", async () => {
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD" });
+    const contaCorrente = await createAccountWithBankItem();
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        pluggyBillId: "bill-mes-1",
+        dueDate: new Date("2026-06-10T00:00:00.000Z"),
+        totalAmount: "800.00",
+      }),
+    });
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        pluggyBillId: "bill-mes-2",
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: "800.00",
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-casa-so-com-a-segunda",
+        category: "Loans and financing",
+        amount: "-800.00",
+        date: new Date("2026-08-08T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.pagamentosFaturaExcluidos).toEqual({ count: 1, total: "800.00" });
+  });
+});
+
+describe("getMonthlySummary - pagamentosFaturaExcluidos e transferenciasExcluidas SEPARADOS, os dois transparentes (Criterio de aceite #3, decisao documentada desta task)", () => {
+  it("uma transferencia (categoria 'Transfers') e um pagamento de fatura (casado por valor+janela) no MESMO mes contam CADA UM no proprio campo, nunca somados um dentro do outro", async () => {
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD" });
+    const contaCorrente = await createAccountWithBankItem();
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: "3408.84",
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-pagamento-fatura-separado",
+        category: "Loans and financing",
+        amount: "-3408.84",
+        date: new Date("2026-08-05T12:00:00.000Z"),
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-transferencia-separada",
+        category: "Transfers",
+        amount: "-600.00",
+        date: new Date("2026-08-12T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.pagamentosFaturaExcluidos).toEqual({ count: 1, total: "3408.84" });
+    expect(summary.transferenciasExcluidas).toEqual({ count: 1, total: "600.00" });
+    expect(summary.despesa).toBe("0.00");
+  });
+
+  it("sem NENHUM pagamento de fatura no mes, pagamentosFaturaExcluidos e {count:0, total:'0.00'} (nao esconde o campo, mesmo zerado)", async () => {
+    const account = await createAccountWithBankItem();
+    await prisma.transaction.create({
+      data: buildTransaction(account.id, {
+        pluggyTransactionId: "tx-so-despesa-normal",
+        category: "Housing",
+        amount: "-100.00",
+        date: new Date("2026-08-05T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.pagamentosFaturaExcluidos).toEqual({ count: 0, total: "0.00" });
+  });
+});
+
+/**
+ * TASK-014 (Criterio de aceite #4) - gasto por metodo: credito (contas
+ * CREDIT_CARD), Pix/TED, debito, dinheiro. Usa contas de tipos diferentes
+ * (CHECKING/CASH/CREDIT_CARD) e `Transaction.method` variados - a MESMA
+ * base de `despesa` (exclui transferencias e pagamentos de fatura).
+ */
+describe("getMonthlySummary - porMetodo, gasto por metodo (Criterio de aceite #4, TASK-014)", () => {
+  it("classifica gastos de contas/metodos variados nos 4 buckets corretos, cada bucket somando SO o que e dele", async () => {
+    const contaCorrente = await createAccountWithBankItem({ name: "Conta Corrente" });
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD", name: "Cartão Gold" });
+    const dinheiro = await createAccountWithBankItem({ type: "CASH", name: "Dinheiro" });
+
+    // credito: compra no cartao (ja normalizada negativa, DT-007).
+    await prisma.transaction.create({
+      data: buildTransaction(cartao.id, {
+        pluggyTransactionId: "tx-metodo-credito",
+        category: "Online shopping",
+        amount: "-138.83",
+        method: null,
+        date: new Date("2026-08-03T12:00:00.000Z"),
+      }),
+    });
+    // pixTed: PIX na conta corrente.
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-metodo-pix",
+        category: "Services",
+        amount: "-90.00",
+        method: "PIX",
+        date: new Date("2026-08-04T12:00:00.000Z"),
+      }),
+    });
+    // pixTed: TED na conta corrente (mesmo bucket de PIX).
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-metodo-ted",
+        category: "Services",
+        amount: "-200.00",
+        method: "TED",
+        date: new Date("2026-08-05T12:00:00.000Z"),
+      }),
+    });
+    // debito: DEBIT na conta corrente.
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-metodo-debito",
+        category: "Supermarket",
+        amount: "-60.00",
+        method: "DEBIT",
+        date: new Date("2026-08-06T12:00:00.000Z"),
+      }),
+    });
+    // dinheiro: lancamento manual na conta Dinheiro (CASH).
+    await prisma.transaction.create({
+      data: buildTransaction(dinheiro.id, {
+        pluggyTransactionId: null,
+        source: "MANUAL",
+        category: null,
+        amount: "-45.50",
+        method: "CASH",
+        date: new Date("2026-08-07T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.porMetodo).toEqual({
+      credito: "138.83",
+      pixTed: "290.00",
+      debito: "60.00",
+      dinheiro: "45.50",
+    });
+    // despesa continua sendo a soma de TUDO, independente do metodo.
+    expect(summary.despesa).toBe("534.33");
+  });
+
+  it("duas transacoes no MESMO bucket somam juntas (nao pega so a ultima)", async () => {
+    const contaCorrente = await createAccountWithBankItem();
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-pix-1",
+        amount: "-50.00",
+        method: "PIX",
+        date: new Date("2026-08-01T12:00:00.000Z"),
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-pix-2",
+        amount: "-25.00",
+        method: "TED",
+        date: new Date("2026-08-02T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.porMetodo.pixTed).toBe("75.00");
+  });
+
+  it("um gasto com method NULL (sem paymentData) e conta CHECKING nao entra em NENHUM dos 4 buckets, mas continua contando em despesa", async () => {
+    const contaCorrente = await createAccountWithBankItem();
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-metodo-nulo",
+        category: "Housing",
+        amount: "-300.00",
+        method: null,
+        date: new Date("2026-08-01T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.porMetodo).toEqual({
+      credito: "0.00",
+      pixTed: "0.00",
+      debito: "0.00",
+      dinheiro: "0.00",
+    });
+    expect(summary.despesa).toBe("300.00");
+  });
+
+  it("um pagamento de fatura EXCLUIDO (casado por valor+janela) NAO entra em porMetodo, mesmo tendo method preenchido", async () => {
+    const cartao = await createAccountWithBankItem({ type: "CREDIT_CARD" });
+    const contaCorrente = await createAccountWithBankItem();
+    await prisma.creditCardBill.create({
+      data: buildCreditCardBill(cartao.id, {
+        dueDate: new Date("2026-08-10T00:00:00.000Z"),
+        totalAmount: "3408.84",
+      }),
+    });
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-pagamento-fatura-com-method",
+        category: "Loans and financing",
+        amount: "-3408.84",
+        method: "DEBIT",
+        date: new Date("2026-08-05T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.porMetodo.debito).toBe("0.00");
+  });
+
+  it("receita (positiva) NAO entra em porMetodo - porMetodo e SO gasto, mesma convencao de porCategoria", async () => {
+    const contaCorrente = await createAccountWithBankItem();
+    await prisma.transaction.create({
+      data: buildTransaction(contaCorrente.id, {
+        pluggyTransactionId: "tx-receita-nao-conta-metodo",
+        category: "Non-recurring income",
+        amount: "1000.00",
+        method: "PIX",
+        date: new Date("2026-08-01T12:00:00.000Z"),
+      }),
+    });
+
+    const { getMonthlySummary } = await import("@/lib/dashboard");
+    const summary = await getMonthlySummary("2026-08");
+
+    expect(summary.porMetodo).toEqual({
+      credito: "0.00",
+      pixTed: "0.00",
+      debito: "0.00",
+      dinheiro: "0.00",
+    });
   });
 });

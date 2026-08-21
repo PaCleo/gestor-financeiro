@@ -31,6 +31,13 @@ import { formatBRL } from "@/lib/format";
  * `category-bar-<n>`, `dashboard-transferencias-count`,
  * `dashboard-transferencias-total`) e o texto formatado por `formatBRL`
  * continuam identicos (contrato de tests/unit/app/dashboard-page.test.tsx).
+ *
+ * TASK-014 (correcao: pagamento de fatura fora do gasto + gastos por
+ * metodo): duas secoes novas, reutilizando os mesmos primitivos
+ * (`.card`/`.kpi-*`) e `formatBRL` - "Gastos por método" (4 cards, um por
+ * bucket de `summary.porMetodo`) e "Pagamentos de fatura excluídos"
+ * (contagem + total de `summary.pagamentosFaturaExcluidos`, SEPARADA da
+ * secao "Transferências excluídas" ja existente - Criterio de aceite #3).
  */
 
 /** Sinal explicito e formatado em R$: negativo usa `formatBRL` (o Intl ja poe o "-" antes de "R$"); positivo/zero ganham "+" antes de "R$". */
@@ -170,6 +177,45 @@ export default async function DashboardPage({
         )}
       </section>
 
+      <section aria-label="Gastos por método" className="grid gap-4 sm:grid-cols-4">
+        <div className="card">
+          <p className="kpi-label">
+            <span className="kpi-dot" style={{ background: "var(--accent-bright)" }} />{" "}
+            Crédito
+          </p>
+          <p data-testid="dashboard-metodo-credito" className="kpi-value num">
+            {formatBRL(summary.porMetodo.credito)}
+          </p>
+        </div>
+        <div className="card">
+          <p className="kpi-label">
+            <span className="kpi-dot" style={{ background: "var(--accent-bright)" }} />{" "}
+            Pix/TED
+          </p>
+          <p data-testid="dashboard-metodo-pix-ted" className="kpi-value num">
+            {formatBRL(summary.porMetodo.pixTed)}
+          </p>
+        </div>
+        <div className="card">
+          <p className="kpi-label">
+            <span className="kpi-dot" style={{ background: "var(--accent-bright)" }} />{" "}
+            Débito
+          </p>
+          <p data-testid="dashboard-metodo-debito" className="kpi-value num">
+            {formatBRL(summary.porMetodo.debito)}
+          </p>
+        </div>
+        <div className="card">
+          <p className="kpi-label">
+            <span className="kpi-dot" style={{ background: "var(--accent-bright)" }} />{" "}
+            Dinheiro
+          </p>
+          <p data-testid="dashboard-metodo-dinheiro" className="kpi-value num">
+            {formatBRL(summary.porMetodo.dinheiro)}
+          </p>
+        </div>
+      </section>
+
       <section aria-label="Transferências excluídas" className="card">
         <div className="card-head">
           <h2 className="card-title">Transferências excluídas</h2>
@@ -184,6 +230,24 @@ export default async function DashboardPage({
           Total:{" "}
           <span data-testid="dashboard-transferencias-total" className="num">
             {formatBRL(summary.transferenciasExcluidas.total)}
+          </span>
+        </p>
+      </section>
+
+      <section aria-label="Pagamentos de fatura excluídos" className="card">
+        <div className="card-head">
+          <h2 className="card-title">Pagamentos de fatura excluídos</h2>
+        </div>
+        <p className="text-sm text-[var(--text-2)]">
+          Quantidade:{" "}
+          <span data-testid="dashboard-pagamentos-fatura-count" className="num">
+            {summary.pagamentosFaturaExcluidos.count}
+          </span>
+        </p>
+        <p className="text-sm text-[var(--text-2)]">
+          Total:{" "}
+          <span data-testid="dashboard-pagamentos-fatura-total" className="num">
+            {formatBRL(summary.pagamentosFaturaExcluidos.total)}
           </span>
         </p>
       </section>

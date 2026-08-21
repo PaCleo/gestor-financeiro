@@ -14,6 +14,16 @@ import { resolveTransactionCategory } from "@/lib/transactions";
  *
  * Assim como `lib/transactions.ts`, esta camada so LE dados ja
  * sincronizados do Postgres - nunca chama a Pluggy.
+ *
+ * TASK-014 (correcao: pagamento de fatura fora do gasto + gastos por
+ * metodo): o DT-018 acima (exclusao por categoria CRUA) fica cego para um
+ * pagamento de fatura que a Pluggy categoriza fora de `TRANSFER_CATEGORIES`
+ * (caso real: -R$3.408,84 categorizado como "Loans and financing"). Esta
+ * task acrescenta uma SEGUNDA deteccao, complementar: `isBillPayment` casa
+ * um debito de conta NAO-cartao com `CreditCardBill.totalAmount` + janela de
+ * `dueDate` (`BILL_PAYMENT_WINDOW_DAYS`). Tambem acrescenta
+ * `classifyExpenseMethod`/`porMetodo` - um recorte adicional de gasto por
+ * metodo (credito/Pix-TED/debito/dinheiro), sem substituir `despesa`.
  */
 
 /**
@@ -72,13 +82,125 @@ export interface CategorySummary {
   total: string;
 }
 
+/**
+ * Tolerancia (em DIAS) da janela ao redor do `dueDate` de uma
+ * `CreditCardBill` usada por `isBillPayment` (secao 2 do TASK-014.md: "ex.
+ * +-10 dias"). Unica fonte da tolerancia - nao duplicada/hardcoded em outro
+ * lugar.
+ */
+export const BILL_PAYMENT_WINDOW_DAYS = 10;
+
+const MS_POR_DIA = 24 * 60 * 60 * 1000;
+
+/**
+ * Deteccao PURA (sem I/O) do "pagamento de fatura = casar com a fatura"
+ * (secao 2 do TASK-014.md, o eixo desta task - corrige o DT-018, que ficava
+ * cego a um pagamento de fatura categorizado pela Pluggy fora do conjunto de
+ * `TRANSFER_CATEGORIES`, ex. "Loans and financing"). Verdadeiro quando
+ * EXISTE ao menos uma `bill` em `bills` tal que: (1) `transaction.amount` e
+ * NEGATIVO (so debito conta - um credito/estorno de mesmo valor nao e
+ * pagamento de fatura); (2) `|transaction.amount| === bill.totalAmount`
+ * EXATO (aritmetica Decimal, nunca float/tolerancia de arredondamento); (3)
+ * a `date` cai na janela SIMETRICA de `windowDays` dias ao redor do
+ * `dueDate`, INCLUSIVA nos dois extremos.
+ *
+ * So responde "e pagamento de fatura?" (booleano) - NAO qual fatura
+ * especifica foi paga (desempate entre faturas de mesmo valor e
+ * irrelevante aqui; vincular a UMA fatura e o ciclo de fatura por cartao,
+ * fora de escopo - TASK-015). `bills` vazio -> sempre `false`.
+ *
+ * Responsabilidade do CHAMADOR (nao desta funcao): so invocar para
+ * transacoes de conta NAO-CARTAO (`Account.type !== "CREDIT_CARD"`) - esta
+ * funcao pura nao conhece o tipo de conta, so compara valor/data.
+ */
+export function isBillPayment(
+  transaction: { amount: string; date: Date },
+  bills: { totalAmount: string; dueDate: Date }[],
+  windowDays: number = BILL_PAYMENT_WINDOW_DAYS,
+): boolean {
+  const amount = new Prisma.Decimal(transaction.amount);
+  if (!amount.isNegative()) {
+    return false;
+  }
+
+  const valorAbsoluto = amount.abs();
+  const janelaMs = windowDays * MS_POR_DIA;
+
+  return bills.some((bill) => {
+    const mesmoValor = valorAbsoluto.equals(new Prisma.Decimal(bill.totalAmount));
+    if (!mesmoValor) {
+      return false;
+    }
+    const distanciaMs = Math.abs(
+      transaction.date.getTime() - bill.dueDate.getTime(),
+    );
+    return distanciaMs <= janelaMs;
+  });
+}
+
+/** Bucket de gasto por metodo (Criterio de aceite #4, TASK-014); `null` = nao classificado. */
+export type ExpenseMethod = "credito" | "pixTed" | "debito" | "dinheiro" | null;
+
+/**
+ * Classificacao PURA de gasto por metodo (Criterio de aceite #4,
+ * TASK-014), por PRECEDENCIA (a ordem importa e e testada explicitamente):
+ *   1. `accountType === "CREDIT_CARD"` -> "credito" SEMPRE, qualquer que
+ *      seja `method` (uma transacao numa conta de cartao e gasto de credito
+ *      por definicao);
+ *   2. senao `accountType === "CASH"` -> "dinheiro" SEMPRE (a conta manual
+ *      "Dinheiro" da TASK-009);
+ *   3. senao `method === "PIX"` ou `"TED"` -> "pixTed";
+ *   4. senao `method === "DEBIT"` -> "debito";
+ *   5. qualquer outro caso -> `null` (nao classificado - nao entra em
+ *      nenhum dos 4 buckets de `porMetodo`, mas CONTINUA contando em
+ *      despesa/porCategoria - `porMetodo` e um recorte ADICIONAL).
+ */
+export function classifyExpenseMethod(input: {
+  accountType: string;
+  method: string | null;
+}): ExpenseMethod {
+  if (input.accountType === "CREDIT_CARD") {
+    return "credito";
+  }
+  if (input.accountType === "CASH") {
+    return "dinheiro";
+  }
+  if (input.method === "PIX" || input.method === "TED") {
+    return "pixTed";
+  }
+  if (input.method === "DEBIT") {
+    return "debito";
+  }
+  return null;
+}
+
+/** Soma dos gastos classificados em cada bucket de `classifyExpenseMethod` (mesma base de `despesa`: exclui transferencias e pagamentos de fatura). */
+export interface MethodSummary {
+  credito: string;
+  pixTed: string;
+  debito: string;
+  dinheiro: string;
+}
+
 export interface MonthlySummary {
   month: string;
   receita: string;
   despesa: string;
   saldo: string;
   porCategoria: CategorySummary[];
+  porMetodo: MethodSummary;
   transferenciasExcluidas: {
+    count: number;
+    total: string;
+  };
+  /**
+   * TASK-014, Criterio de aceite #3: campo SEPARADO de
+   * `transferenciasExcluidas` (decisao documentada na secao 6.3 do
+   * TASK-014.md) - transferencia entre contas proprias e pagamento de
+   * fatura casado por valor+janela sao naturezas de exclusao diferentes;
+   * mante-los distintos preserva a granularidade de auditoria.
+   */
+  pagamentosFaturaExcluidos: {
     count: number;
     total: string;
   };
@@ -130,19 +252,50 @@ export async function getMonthlySummary(month: string): Promise<MonthlySummary> 
       category: true,
       categoryOverride: true,
       categoryFromRule: true,
+      date: true,
+      method: true,
+      account: { select: { type: true } },
     },
   });
+
+  // TASK-014: TODAS as faturas do sistema, SEM filtro de mes nem de conta -
+  // uma fatura com dueDate no mes seguinte pode ter sido paga dentro da
+  // janela ainda no mes consultado.
+  const bills = await prisma.creditCardBill.findMany({
+    select: { totalAmount: true, dueDate: true },
+  });
+  const billsForMatch = bills.map((bill) => ({
+    totalAmount: bill.totalAmount.toString(),
+    dueDate: bill.dueDate,
+  }));
 
   let receita = new Prisma.Decimal(0);
   let despesa = new Prisma.Decimal(0);
   let transferCount = 0;
   let transferTotal = new Prisma.Decimal(0);
+  let billPaymentCount = 0;
+  let billPaymentTotal = new Prisma.Decimal(0);
   const porCategoriaMap = new Map<string, Prisma.Decimal>();
+  const porMetodo: Record<Exclude<ExpenseMethod, null>, Prisma.Decimal> = {
+    credito: new Prisma.Decimal(0),
+    pixTed: new Prisma.Decimal(0),
+    debito: new Prisma.Decimal(0),
+    dinheiro: new Prisma.Decimal(0),
+  };
 
   for (const row of rows) {
     if (isTransferCategory(row.category)) {
       transferCount += 1;
       transferTotal = transferTotal.plus(row.amount.abs());
+      continue;
+    }
+
+    if (
+      row.account.type !== "CREDIT_CARD" &&
+      isBillPayment({ amount: row.amount.toString(), date: row.date }, billsForMatch)
+    ) {
+      billPaymentCount += 1;
+      billPaymentTotal = billPaymentTotal.plus(row.amount.abs());
       continue;
     }
 
@@ -168,8 +321,16 @@ export async function getMonthlySummary(month: string): Promise<MonthlySummary> 
           valorAbsoluto,
         ),
       );
+
+      const metodo = classifyExpenseMethod({
+        accountType: row.account.type,
+        method: row.method,
+      });
+      if (metodo !== null) {
+        porMetodo[metodo] = porMetodo[metodo].plus(valorAbsoluto);
+      }
     }
-    // amount === 0: nao entra em receita, despesa nem porCategoria.
+    // amount === 0: nao entra em receita, despesa, porCategoria nem porMetodo.
   }
 
   const porCategoria: CategorySummary[] = [...porCategoriaMap.entries()]
@@ -184,9 +345,19 @@ export async function getMonthlySummary(month: string): Promise<MonthlySummary> 
     despesa: despesa.toFixed(2),
     saldo: saldo.toFixed(2),
     porCategoria,
+    porMetodo: {
+      credito: porMetodo.credito.toFixed(2),
+      pixTed: porMetodo.pixTed.toFixed(2),
+      debito: porMetodo.debito.toFixed(2),
+      dinheiro: porMetodo.dinheiro.toFixed(2),
+    },
     transferenciasExcluidas: {
       count: transferCount,
       total: transferTotal.toFixed(2),
+    },
+    pagamentosFaturaExcluidos: {
+      count: billPaymentCount,
+      total: billPaymentTotal.toFixed(2),
     },
   };
 }
